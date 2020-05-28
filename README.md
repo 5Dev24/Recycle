@@ -6,6 +6,7 @@
 
 * `recycle.use` -- Allows players to use `/recycle` chat command and `recycle` console command
 * `recycle.admin` -- Allows players to destroy all recyclers or dropped bags currently created by **Recycle**
+* `recycle.bypass` -- Allows players to bypass the cooldown of recycling
 
 ## Commands
 
