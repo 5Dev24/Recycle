@@ -5,41 +5,44 @@
 ## Permissions
 
 * `recycle.use` -- Allows players to use `/recycle` chat command and `recycle` console command
-* `recycle.admin` -- Allows players to forcefully destroy all recyclers currently created by **Recycle**
+* `recycle.admin` -- Allows players to destroy all recyclers or dropped bags currently created by **Recycle**
 
 ## Commands
 
 * `/recycle` and `recycle` -- Opens a recycler
 * `/purgerecyclers` -- Destroys all recyclers and drops their contents to a locked bag at the owner's position
+* `/purgebags` -- Destroys all bags created by **Recycle**
 
 ## Configuration
 
 ```json
 {
-	"Settings": {
-		"Cooldown (in minutes)": 5.0,
-		"Maximum Radiation": 1.0,
-		"Refund Ratio": 0.5,
-		"NPCs Only": false,
-		"Allowed In Safe Zones": true,
-		"Instant Recycling": false,
-		"NPC Ids": [],
-		"Recyclable Types": [
-			"Ammunition",
-			"Attire",
-			"Common",
-			"Component",
-			"Construction",
-			"Items",
-			"Medical",
-			"Misc",
-			"Tool",
-			"Traps",
-			"Weapon"
-		],
-		"Blacklisted Items": []
-	},
-	"VERSION": "3.0.0"
+  "Settings": {
+    "Cooldown (in minutes)": 5.0,
+    "Maximum Radiation": 1.0,
+    "Refund Ratio": 0.5,
+    "NPCs Only": false,
+    "Allowed In Safe Zones": true,
+    "Instant Recycling": false,
+    "NPC Ids": [],
+    "Recyclable Types": [
+      "Ammunition",
+      "Attire",
+      "Common",
+      "Component",
+      "Construction",
+      "Electrical",
+      "Fun",
+      "Items",
+      "Medical",
+      "Misc",
+      "Tool",
+      "Traps",
+      "Weapon"
+    ],
+    "Blacklisted Items": []
+  },
+  "VERSION": "3.0.0"
 }
 ```
 
@@ -53,6 +56,16 @@ bool CanOpenRecycler(BasePlayer player)
 ```
 
 ### API Calls
+
+Adds an NPC to the NPC list
+```csharp
+public void AddNPC(string npcID)
+```
+
+Removes an NPC from the NPC list
+```csharp
+public void RemoveNPC(string npcID)
+```
 
 Checks if an entity is a recycler managed by **Recycler**.
 ```csharp
