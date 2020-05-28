@@ -146,7 +146,11 @@ namespace Oxide.Plugins {
 				{ "Denied -> Balloon", youCannot("on a balloon") },
 				{ "Denied -> Safe Zone", youCannot("in a safe zone") },
 				{ "Denied -> Hook Denied", "You can't recycle right now" },
-				{ "Cooldown -> In", "You need to wait {0} before recycling" }
+				{ "Cooldown -> In", "You need to wait {0} before recycling" },
+				{ "Timings -> second", "second" },
+				{ "Timings -> seconds", "seconds" },
+				{ "Timings -> minute", "minute" },
+				{ "Timings -> minutes", "minutes" }
 			}, this);
 		}
 
@@ -376,11 +380,11 @@ namespace Oxide.Plugins {
 			return new int[] { diff.Minutes, diff.Seconds };
 		}
 
-		private string CooldownTimesToString(int[] times) {
+		private string CooldownTimesToString(int[] times, BasePlayer p) {
 			if (times == null || times.Length != 2) return "";
-			if (times[0] == 0) return (times[1] == 1 ? "1 second" : times[1] + " seconds");
-			return ((times[0] > 0 ? times[0] == 1 ? "1 minute" : times[0] + " minutes" : "") + " " +
-				(times[1] > 0 ? times[1] == 1 ? "1 second" : times[1] + " seconds" : "")).Trim();
+			int mins = times[0], secs = times[1];
+			return (mins == 0 ? "" : ("{0} " + this.GetMessage("Timings", mins == 1 ? "minute" : "minutes", p)) +
+			" {1} " + this.GetMessage("Timings", secs == 1 ? "second" : "seconds", p)).Trim();
 		}
 
 		#endregion
@@ -423,7 +427,7 @@ namespace Oxide.Plugins {
 			public bool CanPlayerOpenRecycler(BasePlayer p) {
 				if (p == null || p.IsDead()) this.PrintToChat(p, this.GetMessage("Denied", "Hook Denied", p));
 				else if (!this.CanUseRecycler(p.userID) && !this.CanManageRecyclers(p.userID)) this.PrintToChat(p, this.GetMessage("Denied", "Permission", p));
-				else if (this.Data.Settings.Cooldown > 0 && this.IsOnCooldown(p.userID)) this.PrintToChat(p, this.GetMessage("Cooldown", "In", p), this.CooldownTimesToString(this.GetCooldown(p.userID)));
+				else if (this.Data.Settings.Cooldown > 0 && this.IsOnCooldown(p.userID)) this.PrintToChat(p, this.GetMessage("Cooldown", "In", p), this.CooldownTimesToString(this.GetCooldown(p.userID), p));
 				else if (p.IsWounded()) this.PrintToChat(p, this.GetMessage("Denied", "Wounded", p));
 				else if (!p.CanBuild()) this.PrintToChat(p, this.GetMessage("Denied", "Privilege", p));
 				else if (this.Data.Settings.RadiationMax > 0 && p.radiationLevel > this.Data.Settings.RadiationMax) this.PrintToChat(p, this.GetMessage("Denied", "Irradiation", p));
