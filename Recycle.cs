@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.1")]
+	[Info("Recycle", "5Dev24", "3.0.2")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -217,7 +217,7 @@ namespace Oxide.Plugins {
 				public List<string> Blacklist = new List<string>();
 			}
 			public SettingsWrapper Settings = new SettingsWrapper();
-			public string VERSION = "3.0.1";
+			public string VERSION = "3.0.2";
 		}
 
 		#endregion
@@ -380,8 +380,10 @@ namespace Oxide.Plugins {
 		private string CooldownTimesToString(int[] times, BasePlayer p) {
 			if (times == null || times.Length != 2) return "";
 			int mins = times[0], secs = times[1];
-			return (mins == 0 ? "" : ("{0} " + this.GetMessage("Timings", mins == 1 ? "minute" : "minutes", p)) +
-			" {1} " + this.GetMessage("Timings", secs == 1 ? "second" : "seconds", p)).Trim();
+			return (
+				string.Format(mins == 0 ? "" : ("{0} " + this.GetMessage("Timings", mins == 1 ? "minute" : "minutes", p)), mins) +
+				string.Format(" {0} " + this.GetMessage("Timings", secs == 1 ? "second" : "seconds", p), secs)
+			).Trim();
 		}
 
 		#endregion
