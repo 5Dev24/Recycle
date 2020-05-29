@@ -1,3 +1,4 @@
+using Oxide.Core.Libraries.Covalence;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -7,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.0")]
+	[Info("Recycle", "5Dev24", "3.0.1")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -28,6 +29,8 @@ namespace Oxide.Plugins {
 			this.LoadMessages();
 			this.ValidateConfig();
 			this.Data = Config.ReadObject<ConfigData>();
+
+			this.AddCovalenceCommand(this.Data?.Settings?.RecycleCommand ?? "recycle", "RecycleCommand", null);
 
 			permission.RegisterPermission(Recycle.AdminPermission, this);
 			permission.RegisterPermission(Recycle.RecyclerPermission, this);
@@ -55,39 +58,23 @@ namespace Oxide.Plugins {
 				Recycler r = con.entityOwner as Recycler;
 				if (this.IsRecycleBox(r)) {
 					BasePlayer p = this.PlayerFromRecycler(r.net.ID);
-					if (target < 6 && (!this.Data.Settings.RecyclableTypes.Contains(Enum.GetName(typeof(ItemCategory), i.info.category)) ||
-						this.Data.Settings.Blacklist.Contains(i.info.shortname))) {
-						if (p != null) this.PrintToChat(p, this.GetMessage("Recycle", "Invalid", p));
-						return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
+					if (target < 6) {
+						if (!this.Data.Settings.RecyclableTypes.Contains(Enum.GetName(typeof(ItemCategory), i.info.category)) ||
+							this.Data.Settings.Blacklist.Contains(i.info.shortname)) {
+							if (p != null) this.PrintToChat(p, this.GetMessage("Recycle", "Invalid", p));
+							return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
+						} else if (this.Data.Settings.InstantRecycling) {
+							if (!r.IsOn()) {
+								r.InvokeRepeating(new Action(r.RecycleThink), 0, 0);
+								Effect.server.Run(r.startSound.resourcePath, r, 0U, Vector3.zero, Vector3.zero, null, false);
+								r.SetFlag(BaseEntity.Flags.On, true, false, true);
+								r.SendNetworkUpdateImmediate();
+							}
+						} else r.StartRecycling();
 					}
 				}
 			}
 			return null;
-		}
-
-		private void OnItemAddedToContainer(ItemContainer con, Item i) {
-			if (con.entityOwner is Recycler) {
-				Recycler r = con.entityOwner as Recycler;
-				if (this.IsRecycleBox(r)) {
-					BasePlayer p = this.PlayerFromRecycler(r.net.ID);
-					if (i == null || p == null || i.position >= 6) return;
-					else if (!this.Data.Settings.RecyclableTypes.Contains(Enum.GetName(typeof(ItemCategory), i.info.category)) ||
-						this.Data.Settings.Blacklist.Contains(i.info.shortname)) {
-						this.PrintToChat(p, this.GetMessage("Recycle", "Invalid", p));
-						return;
-					}
-
-					if (this.Data.Settings.InstantRecycling) {
-						if (!r.IsOn()) {
-							r.InvokeRepeating(new Action(r.RecycleThink), 0, 0);
-							Effect.server.Run(r.startSound.resourcePath, r, 0U, Vector3.zero, Vector3.zero, null, false);
-							r.SetFlag(BaseEntity.Flags.On, true, false, true);
-							r.SendNetworkUpdateImmediate();
-						}
-					} else
-						r.StartRecycling();
-				}
-			}
 		}
 
 		private object OnRecycleItem(Recycler r, Item i) {
@@ -167,12 +154,9 @@ namespace Oxide.Plugins {
 
 		#region Commands
 
-		[ConsoleCommand("recycle")]
-		private void RecycleConsoleCommand(ConsoleSystem.Arg arg) =>
-			this.RecycleChatCommand(arg.Connection.player as BasePlayer, arg.cmd.Name, arg.Args);
-
-		[ChatCommand("recycle")]
-		private void RecycleChatCommand(BasePlayer p, string cmd, string[] args) {
+		private void RecycleCommand(IPlayer iP, string cmd, string[] args) {
+			BasePlayer p = iP.Object as BasePlayer;
+			if (p == null) return;
 			if (!this.Data.Settings.NPCOnly && this.CanPlayerOpenRecycler(p)) {
 				this.OpenRecycler(p);
 				if (this.Data.Settings.Cooldown > 0) {
@@ -211,6 +195,8 @@ namespace Oxide.Plugins {
 
 		public class ConfigData {
 			public class SettingsWrapper {
+				[JsonProperty("Command To Open Recycler")]
+				public string RecycleCommand = "recycle";
 				[JsonProperty("Cooldown (in minutes)")]
 				public float Cooldown = 5.0f;
 				[JsonProperty("Maximum Radiation")]
@@ -231,7 +217,7 @@ namespace Oxide.Plugins {
 				public List<string> Blacklist = new List<string>();
 			}
 			public SettingsWrapper Settings = new SettingsWrapper();
-			public string VERSION = "3.0.0";
+			public string VERSION = "3.0.1";
 		}
 
 		#endregion
@@ -244,6 +230,7 @@ namespace Oxide.Plugins {
 				"Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
 				"Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon" };
 			Config.WriteObject(tmp, true);
+			this.Data = tmp;
 		}
 
 		private T GetSetting<T>(string val, T defaultVal) {
@@ -286,6 +273,16 @@ namespace Oxide.Plugins {
 					Config.Clear();
 					Config.WriteObject(this.Data, true);
 					Config.Save();
+				} else if (version.Equals("3.0.0")) {
+					this.Data = Config.ReadObject<ConfigData>();
+					if (this.Data == null) this.LoadDefaultConfig();
+					else {
+						this.Data.VERSION = Version.ToString();
+						this.Data.Settings.RecycleCommand = "recycle";
+						Config.Clear();
+						Config.WriteObject(this.Data, true);
+						Config.Save();
+					}
 				}
 			} catch (NullReferenceException) {}
 		}

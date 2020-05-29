@@ -4,13 +4,13 @@
 
 ## Permissions
 
-* `recycle.use` -- Allows players to use `/recycle` chat command and `recycle` console command
+* `recycle.use` -- Allows players to use the recycler
 * `recycle.admin` -- Allows players to destroy all recyclers or dropped bags currently created by **Recycle**
 * `recycle.bypass` -- Allows players to bypass the cooldown of recycling
 
 ## Commands
 
-* `/recycle` and `recycle` -- Opens a recycler
+* `/recycle` and `recycle` -- Opens a recycler, can be configured
 * `/purgerecyclers` -- Destroys all recyclers and drops their contents to a locked bag at the owner's position
 * `/purgebags` -- Destroys all bags created by **Recycle**
 
@@ -25,6 +25,7 @@
     "NPCs Only": false,
     "Allowed In Safe Zones": true,
     "Instant Recycling": false,
+    "Command To Open Recycler": "recycle",
     "NPC Ids": [],
     "Recyclable Types": [
       "Ammunition",
@@ -43,7 +44,7 @@
     ],
     "Blacklisted Items": []
   },
-  "VERSION": "3.0.0"
+  "VERSION": "3.0.1"
 }
 ```
 
