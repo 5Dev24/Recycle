@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.2")]
+	[Info("Recycle", "5Dev24", "3.0.3")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -49,8 +49,19 @@ namespace Oxide.Plugins {
 		private void OnPlayerDisconnected(BasePlayer p, string reason) {
 			BaseEntity result = this.RecyclerFromPlayer(p.userID);
 			if (result != null) this.DestroyRecycler(result);
-			foreach (EntityAndPlayer eap in this.DroppedBags.Values)
-				if (eap.Player.userID == p.userID) eap.Entity.Kill();
+
+			EntityAndPlayer[] eaps = this.DroppedBags.Values.Where(e => e.Player.userID == p.userID).ToArray();
+			foreach (EntityAndPlayer eap in eaps)
+				eap.Entity.Kill();
+		}
+
+		private object CanMoveItem(Item item, PlayerInventory pLoot, uint targetCon, int targetSlot, int amount) {
+			if (this.Data.Settings.ToInventory && targetSlot >= 6)
+				foreach (ItemContainer con in pLoot.loot.containers.Where(c => c.uid == targetCon && c.entityOwner != null).ToArray()) {
+					Recycler r = con.entityOwner as Recycler;
+					if (this.IsRecycleBox(r)) return false;
+				}
+			return null;
 		}
 
 		private object CanAcceptItem(ItemContainer con, Item i, int target) {
@@ -58,20 +69,36 @@ namespace Oxide.Plugins {
 				Recycler r = con.entityOwner as Recycler;
 				if (this.IsRecycleBox(r)) {
 					BasePlayer p = this.PlayerFromRecycler(r.net.ID);
+					if (p == null) return null;
+
 					if (target < 6) {
 						if (!this.Data.Settings.RecyclableTypes.Contains(Enum.GetName(typeof(ItemCategory), i.info.category)) ||
 							this.Data.Settings.Blacklist.Contains(i.info.shortname)) {
 							if (p != null) this.PrintToChat(p, this.GetMessage("Recycle", "Invalid", p));
 							return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
-						} else if (this.Data.Settings.InstantRecycling) {
-							if (!r.IsOn()) {
-								r.InvokeRepeating(new Action(r.RecycleThink), 0, 0);
-								Effect.server.Run(r.startSound.resourcePath, r, 0U, Vector3.zero, Vector3.zero, null, false);
-								r.SetFlag(BaseEntity.Flags.On, true, false, true);
-								r.SendNetworkUpdateImmediate();
-							}
-						} else r.StartRecycling();
-					}
+						} else
+							NextFrame(() => {
+								if (r == null || !r.HasRecyclable()) return;
+
+								if (this.Data.Settings.InstantRecycling) {
+									if (!r.IsOn()) {
+										r.InvokeRepeating(new Action(r.RecycleThink), 0, 0);
+										r.SetFlag(BaseEntity.Flags.On, true, false, true);
+										r.SendNetworkUpdateImmediate();
+									}
+								} else r.StartRecycling();
+							});
+					} else if (this.Data.Settings.ToInventory)
+						NextFrame(() => {
+							if (p == null || p.inventory == null || p.inventory.containerMain == null ||
+								p.inventory.containerBelt == null || i == null) return;
+
+							bool flag = false;
+							if (!p.inventory.containerMain.IsFull())
+								flag = i.MoveToContainer(p.inventory.containerMain);
+							if (!flag && !p.inventory.containerBelt.IsFull())
+								i.MoveToContainer(p.inventory.containerBelt);
+						});
 				}
 			}
 			return null;
@@ -209,6 +236,8 @@ namespace Oxide.Plugins {
 				public bool AllowedInSafeZones = true;
 				[JsonProperty("Instant Recycling")]
 				public bool InstantRecycling = false;
+				[JsonProperty("Send Recycled Items To Inventory")]
+				public bool ToInventory = false;
 				[JsonProperty("NPC Ids")]
 				public List<string> NPCIds = new List<string>();
 				[JsonProperty("Recyclable Types")]
@@ -217,7 +246,7 @@ namespace Oxide.Plugins {
 				public List<string> Blacklist = new List<string>();
 			}
 			public SettingsWrapper Settings = new SettingsWrapper();
-			public string VERSION = "3.0.2";
+			public string VERSION = "3.0.3";
 		}
 
 		#endregion
@@ -265,26 +294,29 @@ namespace Oxide.Plugins {
 								"Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
 								"Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon" }),
 							Blacklist = this.GetSetting("blacklist", new List<string>()),
-							AllowedInSafeZones = this.GetSetting("allowSafeZone", true),
-							InstantRecycling = false,
-						},
-						VERSION = Version.ToString()
+							AllowedInSafeZones = this.GetSetting("allowSafeZone", true)
+						}
 					};
-					Config.Clear();
-					Config.WriteObject(this.Data, true);
-					Config.Save();
-				} else if (version.Equals("3.0.0")) {
+					this.UpdateAndSave();
+				} else if (version.Equals("3.0.0") || version.Equals("3.0.1")) {
+					/* All of these versions should handle updating fine due to
+					 * the ConfigData object having defaults
+					 */
 					this.Data = Config.ReadObject<ConfigData>();
-					if (this.Data == null) this.LoadDefaultConfig();
+					if (this.Data == null || this.Data.Settings == null) this.LoadDefaultConfig();
 					else {
-						this.Data.VERSION = Version.ToString();
-						this.Data.Settings.RecycleCommand = "recycle";
-						Config.Clear();
-						Config.WriteObject(this.Data, true);
-						Config.Save();
+						this.Data.Settings.ToInventory = false;
+						this.UpdateAndSave();
 					}
 				}
 			} catch (NullReferenceException) {}
+		}
+
+		private void UpdateAndSave() {
+			this.Data.VERSION = Version.ToString();
+			Config.Clear();
+			Config.WriteObject(this.Data, true);
+			Config.Save();
 		}
 
 		#endregion
