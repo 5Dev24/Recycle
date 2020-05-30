@@ -25,6 +25,7 @@
     "NPCs Only": false,
     "Allowed In Safe Zones": true,
     "Instant Recycling": false,
+    "Send Recycled Items To Inventory": false,
     "Command To Open Recycler": "recycle",
     "NPC Ids": [],
     "Recyclable Types": [
