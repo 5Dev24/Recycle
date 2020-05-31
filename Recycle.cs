@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.3")]
+	[Info("Recycle", "5Dev24", "3.0.4")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -238,15 +238,17 @@ namespace Oxide.Plugins {
 				public bool InstantRecycling = false;
 				[JsonProperty("Send Recycled Items To Inventory")]
 				public bool ToInventory = false;
+				[JsonProperty("Send Items To Inventory Before Bag")]
+				public bool InventoryBeforeBag = false;
 				[JsonProperty("NPC Ids")]
-				public List<string> NPCIds = new List<string>();
+				public List<object> NPCIds = new List<object>();
 				[JsonProperty("Recyclable Types")]
-				public List<string> RecyclableTypes = new List<string>();
+				public List<object> RecyclableTypes = new List<object>();
 				[JsonProperty("Blacklisted Items")]
-				public List<string> Blacklist = new List<string>();
+				public List<object> Blacklist = new List<object>();
 			}
 			public SettingsWrapper Settings = new SettingsWrapper();
-			public string VERSION = "3.0.3";
+			public string VERSION = "3.0.4";
 		}
 
 		#endregion
@@ -255,7 +257,7 @@ namespace Oxide.Plugins {
 
 		protected override void LoadDefaultConfig() {
 			ConfigData tmp = new ConfigData();
-			tmp.Settings.RecyclableTypes = new List<string>() {
+			tmp.Settings.RecyclableTypes = new List<object>() {
 				"Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
 				"Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon" };
 			Config.WriteObject(tmp, true);
@@ -266,7 +268,7 @@ namespace Oxide.Plugins {
 			if (val == null) return default(T);
 			object gotten = Config.Get("Settings", val);
 			if (gotten == null) {
-				Config.Set("Settings", defaultVal);
+				Config.Set("Settings", val, defaultVal);
 				return defaultVal;
 			}
 			return this.ConvertType(gotten, defaultVal);
@@ -289,25 +291,22 @@ namespace Oxide.Plugins {
 							RefundRatio = this.GetSetting("refundRatio", 0.5f),
 							RadiationMax = this.GetSetting("radiationMax", 1f),
 							NPCOnly = this.GetSetting("NPCOnly", false),
-							NPCIds = this.GetSetting("NPCIDs", new List<string>()),
-							RecyclableTypes = this.GetSetting("recyclableTypes", new List<string>() {
+							NPCIds = this.GetSetting("NPCIDs", new List<object>()),
+							RecyclableTypes = this.GetSetting("recyclableTypes", new List<object>() {
 								"Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
 								"Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon" }),
-							Blacklist = this.GetSetting("blacklist", new List<string>()),
+							Blacklist = this.GetSetting("blacklist", new List<object>()),
 							AllowedInSafeZones = this.GetSetting("allowSafeZone", true)
 						}
 					};
 					this.UpdateAndSave();
-				} else if (version.Equals("3.0.0") || version.Equals("3.0.1")) {
+				} else if (version.Equals("3.0.0") || version.Equals("3.0.1") || version.Equals("3.0.3")) {
 					/* All of these versions should handle updating fine due to
 					 * the ConfigData object having defaults
 					 */
 					this.Data = Config.ReadObject<ConfigData>();
 					if (this.Data == null || this.Data.Settings == null) this.LoadDefaultConfig();
-					else {
-						this.Data.Settings.ToInventory = false;
-						this.UpdateAndSave();
-					}
+					else this.UpdateAndSave();
 				}
 			} catch (NullReferenceException) {}
 		}
@@ -357,6 +356,28 @@ namespace Oxide.Plugins {
 				BasePlayer p = this.PlayerFromRecycler(r.net.ID);
 				if (p == null) return;
 				this.PrintToChat(p, this.GetMessage("Recycle", "Dropped", p));
+
+				List<Item> items = r.inventory.itemList.ToList();
+
+				if (this.Data.Settings.InventoryBeforeBag) {
+					for (int i = 0; i < items.Count; i++) {
+						Item item = items[i];
+
+						bool flag = false;
+						if (!p.inventory.containerMain.IsFull())
+							flag = item.MoveToContainer(p.inventory.containerMain);
+						if (!flag && !p.inventory.containerBelt.IsFull())
+							item.MoveToContainer(p.inventory.containerBelt);
+						
+						if (flag) {
+							items.RemoveAt(i);
+							i--;
+						}
+					}
+				}
+
+				if (items.Count == 0) return;
+
 				DroppedItemContainer bag = GameManager.server.CreateEntity(Recycle.BackpackPrefab, p.transform.position + Vector3.up, Quaternion.identity) as DroppedItemContainer;
 				bag.enableSaving = false;
 				bag.TakeFrom(r.inventory);

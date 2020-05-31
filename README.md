@@ -26,6 +26,7 @@
     "Allowed In Safe Zones": true,
     "Instant Recycling": false,
     "Send Recycled Items To Inventory": false,
+    "Send Items To Inventory Before Bag": true,
     "Command To Open Recycler": "recycle",
     "NPC Ids": [],
     "Recyclable Types": [
@@ -45,7 +46,7 @@
     ],
     "Blacklisted Items": []
   },
-  "VERSION": "3.0.3"
+  "VERSION": "3.0.4"
 }
 ```
 
