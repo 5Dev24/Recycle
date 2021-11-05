@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.4")]
+	[Info("Recycle", "5Dev24", "3.0.5")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -368,7 +368,7 @@ namespace Oxide.Plugins {
 							flag = item.MoveToContainer(p.inventory.containerMain);
 						if (!flag && !p.inventory.containerBelt.IsFull())
 							item.MoveToContainer(p.inventory.containerBelt);
-						
+
 						if (flag) {
 							items.RemoveAt(i);
 							i--;
@@ -382,7 +382,7 @@ namespace Oxide.Plugins {
 				bag.enableSaving = false;
 				bag.TakeFrom(r.inventory);
 				bag.Spawn();
-				bag.lootPanelName = "smallwoodbox";
+				bag.lootPanelName = "generic_resizable";
 				bag.playerSteamID = p.userID;
 				this.DroppedBags.Add(bag.net.ID, new EntityAndPlayer { Entity = bag, Player = p });
 			}
@@ -407,7 +407,7 @@ namespace Oxide.Plugins {
 			this.Recyclers.Clear();
 		}
 
-		private void DestroyBags() { 
+		private void DestroyBags() {
 			while (this.DroppedBags.Count > 0) {
 				KeyValuePair<uint, EntityAndPlayer> ueap = this.DroppedBags.FirstOrDefault();
 				this.DroppedBags.Remove(ueap.Value.Entity.net.ID);
