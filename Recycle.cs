@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins {
 
-	[Info("Recycle", "5Dev24", "3.0.4")]
+	[Info("Recycle", "5Dev24", "3.0.5")]
 	[Description("Recycle items into their resources")]
 	public class Recycle : RustPlugin {
 
@@ -159,6 +159,7 @@ namespace Oxide.Plugins {
 				{ "Denied -> Elevator", youCannot("on an elevator") },
 				{ "Denied -> Balloon", youCannot("on a balloon") },
 				{ "Denied -> Safe Zone", youCannot("in a safe zone") },
+				{ "Denied -> Only Safe Zone", "You must be in a safe zone to use the recycler" },
 				{ "Denied -> Hook Denied", "You can't recycle right now" },
 				{ "Cooldown -> In", "You need to wait {0} before recycling" },
 				{ "Timings -> second", "second" },
@@ -234,6 +235,8 @@ namespace Oxide.Plugins {
 				public bool NPCOnly = false;
 				[JsonProperty("Allowed In Safe Zones")]
 				public bool AllowedInSafeZones = true;
+				[JsonProperty("Only In Safe Zones")]
+				public bool OnlyInSafeZones = false;
 				[JsonProperty("Instant Recycling")]
 				public bool InstantRecycling = false;
 				[JsonProperty("Send Recycled Items To Inventory")]
@@ -296,7 +299,8 @@ namespace Oxide.Plugins {
 								"Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
 								"Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon" }),
 							Blacklist = this.GetSetting("blacklist", new List<object>()),
-							AllowedInSafeZones = this.GetSetting("allowSafeZone", true)
+							AllowedInSafeZones = this.GetSetting("allowSafeZone", true),
+							OnlyInSafeZones = this.GetSetting("onlyInSafeZone", true)
 						}
 					};
 					this.UpdateAndSave();
@@ -342,7 +346,7 @@ namespace Oxide.Plugins {
 				p.EndLooting();
 				if (!p.inventory.loot.StartLootingEntity(con, false)) return;
 				p.inventory.loot.AddContainer(con.inventory);
-				p.inventory.loot.SendImmediate();
+				//p.inventory.loot.SendImmediate();
 				p.ClientRPCPlayer(null, p, "RPC_OpenLootPanel", con.panelName);
 				p.SendNetworkUpdate();
 			});
@@ -382,7 +386,7 @@ namespace Oxide.Plugins {
 				bag.enableSaving = false;
 				bag.TakeFrom(r.inventory);
 				bag.Spawn();
-				bag.lootPanelName = "smallwoodbox";
+				bag.lootPanelName = "generic_resizable";
 				bag.playerSteamID = p.userID;
 				this.DroppedBags.Add(bag.net.ID, new EntityAndPlayer { Entity = bag, Player = p });
 			}
@@ -490,6 +494,7 @@ namespace Oxide.Plugins {
 				else if (p.GetComponentInParent<HotAirBalloon>()) this.PrintToChat(p, this.GetMessage("Denied", "Balloon", p));
 				else if (p.GetComponentInParent<Lift>()) this.PrintToChat(p, this.GetMessage("Denied", "Elevator", p));
 				else if (!this.Data.Settings.AllowedInSafeZones && p.InSafeZone()) this.PrintToChat(p, this.GetMessage("Denied", "Safe Zone", p));
+				else if (this.Data.Settings.OnlyInSafeZones && !p.InSafeZone()) this.PrintToChat(p, this.GetMessage("Denied", "Only Safe Zone", p));
 				else {
 					object ret = Interface.Call("CanOpenRecycler", p);
 					if (ret != null && ret is bool && !((bool) ret)) this.PrintToChat(p, this.GetMessage("Denied", "Hook Denied", p));
