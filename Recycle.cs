@@ -236,7 +236,7 @@ namespace Oxide.Plugins {
 				[JsonProperty("Allowed In Safe Zones")]
 				public bool AllowedInSafeZones = true;
 				[JsonProperty("Only In Safe Zones")]
-				public bool OnlyInSafeZones = true;
+				public bool OnlyInSafeZones = false;
 				[JsonProperty("Instant Recycling")]
 				public bool InstantRecycling = false;
 				[JsonProperty("Send Recycled Items To Inventory")]
