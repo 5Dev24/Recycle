@@ -24,7 +24,7 @@
     "Refund Ratio": 0.5,
     "NPCs Only": false,
     "Allowed In Safe Zones": true,
-    "Only In Safe Zone": false,
+    "Only In Safe Zones": false,
     "Instant Recycling": false,
     "Send Recycled Items To Inventory": false,
     "Send Items To Inventory Before Bag": true,
