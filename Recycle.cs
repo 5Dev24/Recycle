@@ -494,7 +494,7 @@ namespace Oxide.Plugins {
 				else if (p.GetComponentInParent<HotAirBalloon>()) this.PrintToChat(p, this.GetMessage("Denied", "Balloon", p));
 				else if (p.GetComponentInParent<Lift>()) this.PrintToChat(p, this.GetMessage("Denied", "Elevator", p));
 				else if (!this.Data.Settings.AllowedInSafeZones && p.InSafeZone()) this.PrintToChat(p, this.GetMessage("Denied", "Safe Zone", p));
-				else if (this.Data.Settings.OnlyInSafeZones && !p.InSafeZone()) this.PrintToChat(p, this.GetMessage("Denied", "Safe Zone", p))
+				else if (this.Data.Settings.OnlyInSafeZones && !p.InSafeZone()) this.PrintToChat(p, this.GetMessage("Denied", "Only Safe Zone", p))
 				else {
 					object ret = Interface.Call("CanOpenRecycler", p);
 					if (ret != null && ret is bool && !((bool) ret)) this.PrintToChat(p, this.GetMessage("Denied", "Hook Denied", p));
