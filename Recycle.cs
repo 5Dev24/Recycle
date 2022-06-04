@@ -346,7 +346,7 @@ namespace Oxide.Plugins {
 				p.EndLooting();
 				if (!p.inventory.loot.StartLootingEntity(con, false)) return;
 				p.inventory.loot.AddContainer(con.inventory);
-				//p.inventory.loot.SendImmediate();
+				p.inventory.loot.SendImmediate();
 				p.ClientRPCPlayer(null, p, "RPC_OpenLootPanel", con.panelName);
 				p.SendNetworkUpdate();
 			});
