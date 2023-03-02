@@ -8,7 +8,7 @@ using System;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "5Dev24", "3.1.0")]
+    [Info("Recycle", "5Dev24", "3.1.1")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -478,7 +478,7 @@ namespace Oxide.Plugins
             if (bag == null) return;
 
             bag.enableSaving = false;
-            bag.TakeFrom(recycler.inventory);
+            bag.TakeFrom(new[] { recycler.inventory });
             bag.Spawn();
             bag.lootPanelName = "generic_resizable";
             bag.playerSteamID = p.userID;
