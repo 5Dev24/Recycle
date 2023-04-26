@@ -1,4 +1,4 @@
-﻿using Oxide.Core.Libraries.Covalence;
+using Oxide.Core.Libraries.Covalence;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -107,7 +107,9 @@ namespace Oxide.Plugins
                             owner.SetFlag(BaseEntity.Flags.On, true);
                             owner.SendNetworkUpdateImmediate();
                         }
-                        else owner.StartRecycling();
+                        else
+                       	owner.CancelInvoke(nameof(owner.RecycleThink));
+						timer.Once(0.1f, () => owner.InvokeRepeating(owner.RecycleThink, this._data.Settings.RecyclerSpeed - 0.1f, this._data.Settings.RecyclerSpeed));
                     });
             }
             else if (this._data.Settings.ToInventory)
@@ -278,6 +280,8 @@ namespace Oxide.Plugins
                 public bool AllowedInSafeZones = true;
 
                 [JsonProperty("Instant Recycling")] public bool InstantRecycling = false;
+                
+                [JsonProperty(PropertyName = "Recyler Speed (Lower = Faster) (Seconds)")] public float RecyclerSpeed = 5.0f;
 
                 [JsonProperty("Send Recycled Items To Inventory")]
                 public bool ToInventory = false;
