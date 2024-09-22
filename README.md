@@ -10,9 +10,10 @@
 
 ## Commands
 
-* `/recycle` and `recycle` -- Opens a recycler, can be configured
-* `/purgerecyclers` -- Destroys all recyclers and drops their contents to a locked bag at the owner's position
-* `/purgebags` -- Destroys all bags created by **Recycle**
+* `recycle` -- Opens a recycler, can be configured
+* `recycle reloadconfig` -- Reloads the configuration file
+* `purgerecyclers` -- Destroys all recyclers and drops their contents to a locked bag at the owner's position
+* `purgebags` -- Destroys all bags created by **Recycle**
 
 ## Configuration
 
@@ -46,7 +47,7 @@
     ],
     "Blacklisted Items": []
   },
-  "VERSION": "3.1.0"
+  "VERSION": "3.1.3"
 }
 ```
 
@@ -56,41 +57,41 @@
 
 Invoked when checking if a recycler is safe to open.
 ```csharp
-bool CanOpenRecycler(BasePlayer player)
+private bool CanOpenRecycler(BasePlayer player)
 ```
 
 ### API Calls
 
 Adds an NPC to the NPC list
 ```csharp
-public void AddNPC(string npcID)
+private void AddNPC(string npcID)
 ```
 
 Removes an NPC from the NPC list
 ```csharp
-public void RemoveNPC(string npcID)
+private void RemoveNPC(string npcID)
 ```
 
 Checks if an entity is a recycler managed by **Recycler**.
 ```csharp
-public bool IsRecycleBox(BaseNetworkable entity)
+private bool IsRecycleBox(BaseNetworkable entity)
 ```
 
 Checks if a player can safely open a recycler.
 ```csharp
-public bool CanPlayerOpenRecycler(BasePlayer player)
+private bool CanPlayerOpenRecycler(BasePlayer player)
 ```
 
 Checks if the player is current on cooldown from using the recycler.
 ```csharp
-public bool IsOnCooldown(BasePlayer player)
+private bool IsOnCooldown(BasePlayer player)
 ```
 
 Forcefully opens a recycler for the player
 
 !! No checks are done, including calling the hook !!
 ```csharp
-public void OpenRecycler(BasePlayer player)
+private void OpenRecycler(BasePlayer player)
 ```
 
 ## Credits
