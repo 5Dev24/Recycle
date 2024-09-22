@@ -5,181 +5,164 @@ using UnityEngine;
 using System.Linq;
 using Oxide.Core;
 using System;
+using Facepunch;
+using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "5Dev24", "3.1.1")]
+    [Info("Recycle", "5Dev24", "3.1.3")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
-        private const string RecyclePrefab = "assets/bundled/prefabs/static/recycler_static.prefab",
+        private const string 
+            RecyclePrefab = "assets/bundled/prefabs/static/recycler_static.prefab",
             BackpackPrefab = "assets/prefabs/misc/item drop/item_drop_backpack.prefab",
             AdminPermission = "recycle.admin",
             RecyclerPermission = "recycle.use",
             CooldownBypassPermission = "recycle.bypass";
 
-        private readonly Dictionary<uint, EntityAndPlayer> _recyclers = new Dictionary<uint, EntityAndPlayer>();
-        private readonly Dictionary<uint, EntityAndPlayer> _droppedBags = new Dictionary<uint, EntityAndPlayer>();
-        private readonly Dictionary<ulong, long> _cooldowns = new Dictionary<ulong, long>();
-        private ConfigData _data;
+        private readonly Dictionary<ulong, (DroppedItemContainer container, BasePlayer player)> _droppedContainers = new();
+        private readonly Dictionary<ulong, (Recycler recycler, BasePlayer player)> _recyclers = new();
+        private readonly Dictionary<string, long> _cooldowns = new();
+        private ConfigData config;
 
         #region Hooks
 
-        private void Init() => this.Unsubscribe(nameof(CanNetworkTo));
-
         private void Loaded()
         {
-            this.LoadMessages();
-            this.ValidateConfig();
-            this._data = Config.ReadObject<ConfigData>();
-
-            this.AddCovalenceCommand(this._data?.Settings?.RecycleCommand ?? "recycle", "RecycleCommand");
-
-            permission.RegisterPermission(Recycle.AdminPermission, this);
-            permission.RegisterPermission(Recycle.RecyclerPermission, this);
-            permission.RegisterPermission(Recycle.CooldownBypassPermission, this);
+            string recycleCommand = string.IsNullOrEmpty(config.Settings.RecycleCommand) ? "recycle" : config.Settings.RecycleCommand;
+            AddCovalenceCommand(recycleCommand, "RecycleCommand");
+            AddCovalenceCommand("purgerecyclers", "PurgeRecyclersCommand");
+            AddCovalenceCommand("purgebags", "PurgeBagsCommand");
+            permission.RegisterPermission(AdminPermission, this);
+            permission.RegisterPermission(RecyclerPermission, this);
+            permission.RegisterPermission(CooldownBypassPermission, this);
+            if (!config.Settings.ToInventory) Unsubscribe(nameof(CanMoveItem));
         }
 
         private void Unload()
         {
-            this.DestroyRecyclers();
-            this.DestroyBags();
+            DestroyRecyclers();
+            DestroyBags();
         }
 
-        private void OnLootEntityEnd(BasePlayer p, BaseEntity e)
+        private void OnLootEntityEnd(BasePlayer player, Recycler recycler)
         {
-            if (this.IsRecycleBox(e)) this.DestroyRecycler(e);
+            if (!player) return;
+
+            DestroyRecycler(player);
         }
 
-        private void OnPlayerDisconnected(BasePlayer p, string reason)
+        private void OnPlayerDisconnected(BasePlayer player, string reason)
         {
-            BaseEntity result = this.RecyclerFromPlayer(p.userID);
-            if (result != null) this.DestroyRecycler(result);
+            if (!player) return;
 
-            EntityAndPlayer[] eaps = this._droppedBags.Values.Where(e => e.Player.userID == p.userID).ToArray();
-            foreach (EntityAndPlayer eap in eaps)
-                eap.Entity.Kill();
-        }
+            DestroyRecycler(player);
 
-        private object CanMoveItem(Item item, PlayerInventory pLoot, uint targetCon, int targetSlot, int amount)
-        {
-            if (!this._data.Settings.ToInventory || targetSlot < 6) return null;
+            if (_droppedContainers.Count == 0) return;
 
-            foreach (ItemContainer con in pLoot.loot.containers)
+            var tmp = Pool.Get<List<KeyValuePair<ulong, (DroppedItemContainer, BasePlayer)>>>();
+
+            tmp.AddRange(_droppedContainers);
+
+            foreach (var (uid, (container, target)) in tmp)
             {
-                if (con.uid != targetCon || con.entityOwner == null) continue;
+                if (!IsValid(container) || !IsValid(target) || target.userID == player.userID)
+                {
+                    if (IsValid(container))
+                        container.Kill();
 
-                Recycler r = con.entityOwner as Recycler;
-                if (this.IsRecycleBox(r)) return false;
+                    _droppedContainers.Remove(uid);
+                }
+            }
+
+            Pool.FreeUnmanaged(ref tmp);
+        }
+
+        private object CanMoveItem(Item item, PlayerInventory inv, ItemContainerId targetContainerId, int targetSlot, int amount)
+        {
+            if (targetSlot < 6) return null;
+
+            foreach (ItemContainer container in inv.loot.containers)
+            {
+                if (container.uid != targetContainerId || container.entityOwner == null) continue;
+
+                if (container.entityOwner is Recycler recycler && IsRecycleBox(recycler)) return false;
             }
 
             return null;
         }
 
-        private object CanAcceptItem(ItemContainer con, Item i, int target)
+        private object CanAcceptItem(ItemContainer container, Item item, int targetPos)
         {
-            if (!(con.entityOwner is Recycler)) return null;
+            if (container == null || !(container.entityOwner is Recycler recycler)) return null;
 
-            Recycler owner = (Recycler)con.entityOwner;
-            if (!this.IsRecycleBox(owner)) return null;
+            if (!IsRecycleBox(recycler)) return null;
 
-            BasePlayer p = this.PlayerFromRecycler(owner.net.ID);
-            if (p == null) return null;
+            BasePlayer player = PlayerFromRecycler(recycler.net.ID.Value);
 
-            if (target < 6)
+            if (!player) return null;
+
+            if (targetPos < 6)
             {
-                if (!this._data.Settings.RecyclableTypes.Contains(Enum.GetName(typeof(ItemCategory),
-                        i.info.category)) ||
-                    this._data.Settings.Blacklist.Contains(i.info.shortname))
+                string type = Enum.GetName(typeof(ItemCategory), item.info.category);
+
+                if (!config.Settings.RecyclableTypes.Contains(type) || config.Settings.Blacklist.Contains(item.info.shortname))
                 {
-                    if (p != null) this.PrintToChat(p, this.GetMessage("Recycle", "Invalid", p));
+                    Message(player, "Recycle", "Invalid");
                     return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
                 }
                 else
-                    NextFrame(() =>
-                    {
-                        if (owner == null || !owner.HasRecyclable()) return;
-
-                        if (this._data.Settings.InstantRecycling)
-                        {
-                            if (owner.IsOn()) return;
-                            owner.InvokeRepeating(owner.RecycleThink, 0, 0);
-                            owner.SetFlag(BaseEntity.Flags.On, true);
-                            owner.SendNetworkUpdateImmediate();
-                        }
-                        else owner.StartRecycling();
-                    });
-            }
-            else if (this._data.Settings.ToInventory)
-                NextFrame(() =>
                 {
-                    if (p == null || p.inventory == null || p.inventory.containerMain == null ||
-                        p.inventory.containerBelt == null || i == null) return;
+                    recycler.Invoke(() =>
+                    {
+                        if (recycler.IsOn() || !recycler.HasRecyclable()) return;
 
-                    bool flag = false;
-                    if (!p.inventory.containerMain.IsFull())
-                        flag = i.MoveToContainer(p.inventory.containerMain);
-                    if (!flag && !p.inventory.containerBelt.IsFull())
-                        i.MoveToContainer(p.inventory.containerBelt);
-                });
-
-            return null;
-        }
-
-        private object OnItemRecycle(Item item, Recycler recycler)
-        {
-            if (!this.IsRecycleBox(recycler)) return null;
-
-            BasePlayer p = this.PlayerFromRecycler(recycler.net.ID);
-            if (p == null || recycler.transform.position == p.transform.position) return null;
-
-            Transform transform = recycler.transform;
-            Vector3 old = transform.position;
-
-            transform.position = p.transform.position;
-            recycler.SendNetworkUpdateImmediate();
-            this.NextFrame(() =>
+                        if (config.Settings.InstantRecycling)
+                        {
+                            recycler.InvokeRepeating(recycler.RecycleThink, 0.0625f, 0.0625f);
+                            recycler.SetFlag(BaseEntity.Flags.On, true);
+                            recycler.SendNetworkUpdateImmediate();
+                        }
+                        else recycler.StartRecycling();
+                    }, 0.0625f);
+                }
+            }
+            else if (config.Settings.ToInventory)
             {
-                if (recycler == null) return;
-                transform.position = old;
-                recycler.SendNetworkUpdateImmediate();
-            });
+                player.Invoke(() =>
+                {
+                    if (item == null) return;
+                    player?.inventory?.GiveItem(item);
+                }, 0.0625f);
+            }
 
             return null;
         }
 
-        private object CanLootEntity(BasePlayer p, DroppedItemContainer con)
+        private object CanLootEntity(BasePlayer player, DroppedItemContainer container)
         {
-            if (this._droppedBags.ContainsKey(con.net.ID) &&
-                this._droppedBags[con.net.ID].Player.userID != p.userID) return false;
+            if (container.IsValid() && _droppedContainers.TryGetValue(container.net.ID.Value, out var t) && t.player.userID != player.userID) return true;
             return null;
         }
 
-        private object CanNetworkTo(BaseNetworkable e, BasePlayer p)
+        private void OnEntityKill(DroppedItemContainer container)
         {
-            if (e == null || p == null || p == e || p.IsAdmin) return null;
-
-            if (this.IsRecycleBox(e))
-                return (this.PlayerFromRecycler(e.net.ID)?.userID ?? 0) == p.userID;
-            return null;
+            if (container.IsValid()) _droppedContainers.Remove(container.net.ID.Value);
         }
 
-        private void OnEntityKill(BaseNetworkable e)
-        {
-            if (e is DroppedItemContainer && this._droppedBags.ContainsKey(e.net.ID))
-                this._droppedBags.Remove(e.net.ID);
-        }
-
-        private void LoadMessages()
+        protected override void LoadDefaultMessages()
         {
             Func<string, string> youCannot = (thing) => "You cannot recycle while " + thing;
 
             lang.RegisterMessages(new Dictionary<string, string>
             {
+                { "Recycle -> Reloaded", "Configuration file has been reloaded" },
                 { "Recycle -> DestroyedAllBags", "All bags have been destroyed" },
                 { "Recycle -> DestroyedAll", "All recyclers have been destroyed" },
                 { "Recycle -> Dropped", "You left some items in the recycler!" },
                 { "Recycle -> Invalid", "You cannot recycle that!" },
+                { "Denied -> Npc Only", "You must use the recycler at specific npcs only" },
                 { "Denied -> Permission", "You don't have permission to use that command" },
                 { "Denied -> Privilege", "You cannot recycle within someone's building privilege" },
                 { "Denied -> Swimming", youCannot("swimming") },
@@ -200,65 +183,95 @@ namespace Oxide.Plugins
             }, this);
         }
 
-        #endregion
-
-        #region HumanNPC Support
-
-        private void OnUseNPC(BasePlayer npc, BasePlayer p)
+        private void OnUseNPC(BasePlayer npc, BasePlayer player) // HumanNPC plugin support
         {
-            if (this._data?.Settings?.NPCIds != null && !this._data.Settings.NPCIds.Contains(npc.UserIDString)) return;
-            this.OpenRecycler(p);
+            if (!npc || !config.Settings.NPCIds.Contains(npc.UserIDString)) return;
+            OpenRecycler(player);
         }
 
         #endregion
 
         #region Commands
 
-        private void RecycleCommand(IPlayer iP, string cmd, string[] args)
+        private void RecycleCommand(IPlayer user, string command, string[] args)
         {
-            BasePlayer p = iP.Object as BasePlayer;
-            if (p == null || this._data.Settings.NPCOnly || !this.CanPlayerOpenRecycler(p)) return;
+            if (CanManageRecyclers(user) && args.Contains("reloadconfig"))
+            {
+                LoadConfig();
+                Message(user, "Recycle", "Reloaded");
+            }
 
-            this.OpenRecycler(p);
-            if (this._data.Settings.Cooldown <= 0) return;
+            if (config.Settings.NPCOnly)
+                return;
 
-            if (this._cooldowns.ContainsKey(p.userID))
-                this._cooldowns[p.userID] = DateTimeOffset.Now.ToUnixTimeSeconds();
+            BasePlayer player = user.Object as BasePlayer;
+            
+            if (!player || !CanPlayerOpenRecycler(player)) 
+                return;
+
+            OpenRecycler(player);
+
+            if (config.Settings.Cooldown > 0 && !CanBypassCooldown(user)) 
+                _cooldowns[player.UserIDString] = DateTimeOffset.Now.ToUnixTimeSeconds() + (long)(config.Settings.Cooldown * 60);
+        }
+
+        private void PurgeRecyclersCommand(IPlayer user, string command, string[] args)
+        {
+            if (CanManageRecyclers(user))
+            {
+                DestroyRecyclers();
+                Message(user, "Recycle", "DestroyedAll");
+            }
+            else Message(user, "Denied", "Permission");
+        }
+
+        private void PurgeBagsCommand(IPlayer user, string command, string[] args)
+        {
+            if (CanManageRecyclers(user))
+            {
+                DestroyBags();
+                Message(user, "Recycle", "DestroyedAllBags");
+            }
+            else Message(user, "Denied", "Permission");
+        }
+
+        private void Message(IPlayer user, string top, string bottom)
+        {
+            if (user.Object is BasePlayer player)
+            {
+                Message(player, top, bottom);
+                return;
+            }
+
+            string message = GetMessage(top, bottom, user.Id);
+
+            if (string.IsNullOrEmpty(message))
+            {
+                return; // set a message value to empty to disable that message
+            }
+
+            if (user.IsServer)
+            {
+                Puts(message);
+            }
             else
-                this._cooldowns.Add(p.userID, DateTimeOffset.Now.ToUnixTimeSeconds());
+            {
+                user.Message(message);
+            }
         }
 
-        [ChatCommand("purgerecyclers")]
-        private void PurgeRecyclersChatCommand(BasePlayer p, string cmd, string[] args)
+        private void Message(BasePlayer player, string top, string bottom, params object[] args)
         {
-            if (this.CanManageRecyclers(p.userID))
-            {
-                this.DestroyRecyclers();
-                this.PrintToChat(p, this.GetMessage("Recycle", "DestroyedAll", p));
-            }
-            else this.PrintToChat(p, this.GetMessage("Denied", "Permission", p));
+            string message = GetMessage(top, bottom, player.UserIDString);
+            if (string.IsNullOrEmpty(message)) return;
+            PrintToChat(player, args.Length > 0 ? string.Format(message, args) : message);
         }
 
-        [ChatCommand("purgebags")]
-        private void PurgeBagsChatCommand(BasePlayer p, string cmd, string[] args)
-        {
-            if (this.CanManageRecyclers(p.userID))
-            {
-                this.DestroyBags();
-                this.PrintToChat(p, this.GetMessage("Recycle", "DestroyedAllBags", p));
-            }
-            else this.PrintToChat(p, this.GetMessage("Denied", "Permission", p));
-        }
+        public bool IsValid(BaseNetworkable e) => e.IsValid() && !e.IsDestroyed;
 
         #endregion
 
         #region Structs
-
-        public struct EntityAndPlayer
-        {
-            public BaseEntity Entity;
-            public BasePlayer Player;
-        }
 
         public class ConfigData
         {
@@ -270,14 +283,20 @@ namespace Oxide.Plugins
                 [JsonProperty("Cooldown (in minutes)")]
                 public float Cooldown = 5.0f;
 
-                [JsonProperty("Maximum Radiation")] public float RadiationMax = 1f;
-                [JsonProperty("Refund Ratio")] public float RefundRatio = 0.5f;
-                [JsonProperty("NPCs Only")] public bool NPCOnly;
+                [JsonProperty("Maximum Radiation")] 
+                public float RadiationMax = 1f;
+
+                [JsonProperty("Refund Ratio")] 
+                public float RefundRatio = 0.5f;
+
+                [JsonProperty("NPCs Only")] 
+                public bool NPCOnly;
 
                 [JsonProperty("Allowed In Safe Zones")]
                 public bool AllowedInSafeZones = true;
 
-                [JsonProperty("Instant Recycling")] public bool InstantRecycling = false;
+                [JsonProperty("Instant Recycling")] 
+                public bool InstantRecycling = false;
 
                 [JsonProperty("Send Recycled Items To Inventory")]
                 public bool ToInventory = false;
@@ -285,13 +304,18 @@ namespace Oxide.Plugins
                 [JsonProperty("Send Items To Inventory Before Bag")]
                 public bool InventoryBeforeBag = false;
 
-                [JsonProperty("NPC Ids")] public List<object> NPCIds = new List<object>();
-                [JsonProperty("Recyclable Types")] public List<object> RecyclableTypes = new List<object>();
-                [JsonProperty("Blacklisted Items")] public List<object> Blacklist = new List<object>();
+                [JsonProperty("NPC Ids", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
+                public List<object> NPCIds = new();
+
+                [JsonProperty("Recyclable Types", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
+                public List<object> RecyclableTypes = new();
+
+                [JsonProperty("Blacklisted Items", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
+                public List<object> Blacklist = new();
             }
 
-            public SettingsWrapper Settings = new SettingsWrapper();
-            public string VERSION = "3.1.0";
+            public SettingsWrapper Settings = new();
+            public string VERSION = "3.1.1";
         }
 
         #endregion
@@ -300,256 +324,214 @@ namespace Oxide.Plugins
 
         protected override void LoadDefaultConfig()
         {
-            ConfigData tmp = new ConfigData
+            config = new()
             {
                 Settings =
                 {
-                    RecyclableTypes = new List<object>()
+                    RecyclableTypes = new()
                     {
                         "Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
                         "Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon"
                     }
                 }
             };
-
-            Config.WriteObject(tmp, true);
-            this._data = tmp;
         }
 
-        private T GetSetting<T>(string val, T defaultVal)
+        protected override void LoadConfig()
         {
-            if (val == null) return default(T);
-            object gotten = Config.Get("Settings", val);
-            if (gotten == null)
-            {
-                Config.Set("Settings", val, defaultVal);
-                return defaultVal;
-            }
-
-            return this.ConvertType(gotten, defaultVal);
-        }
-
-        private T ConvertType<T>(object val, T defaultVal)
-        {
-            if (val == null) return defaultVal;
-            return (T)Convert.ChangeType(val, typeof(T));
-        }
-
-        private void ValidateConfig()
-        {
-            this.LoadConfig();
+            base.LoadConfig();
             try
             {
-                object version = Config.Get("VERSION");
-                if (version == null) this.LoadDefaultConfig();
-                else if (version.Equals("2.1.10"))
-                {
-                    this._data = new ConfigData
-                    {
-                        Settings = new ConfigData.SettingsWrapper
-                        {
-                            Cooldown = this.GetSetting("cooldownMinutes", 5f),
-                            RefundRatio = this.GetSetting("refundRatio", 0.5f),
-                            RadiationMax = this.GetSetting("radiationMax", 1f),
-                            NPCOnly = this.GetSetting("NPCOnly", false),
-                            NPCIds = this.GetSetting("NPCIDs", new List<object>()),
-                            RecyclableTypes = this.GetSetting("recyclableTypes", new List<object>()
-                            {
-                                "Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
-                                "Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon"
-                            }),
-                            Blacklist = this.GetSetting("blacklist", new List<object>()),
-                            AllowedInSafeZones = this.GetSetting("allowSafeZone", true)
-                        }
-                    };
-                    this.UpdateAndSave();
-                }
-                else if (version.Equals("3.0.0") || version.Equals("3.0.1") || version.Equals("3.0.3") ||
-                         version.Equals("3.0.4") || version.Equals("3.0.5") || version.Equals("3.1.0"))
-                {
-                    /* All of these versions should handle updating fine due to
-                     * the ConfigData object having defaults
-                     */
-                    this._data = Config.ReadObject<ConfigData>();
-                    if (this._data?.Settings == null) this.LoadDefaultConfig();
-                    else this.UpdateAndSave();
-                }
-                else
-                {
-                    this._data = Config.ReadObject<ConfigData>(); // Pray?
-                }
+                config = Config.ReadObject<ConfigData>();
+                config ??= new();
+                config.Settings ??= new();
+                config.Settings.NPCIds ??= new();
+                SaveConfig();
             }
-            catch (NullReferenceException)
+            catch (Exception ex)
             {
+                canSaveConfig = false;
+                Puts(ex.ToString());
+                LoadDefaultConfig();
             }
         }
 
-        private void UpdateAndSave()
+        private bool canSaveConfig = true;
+
+        protected override void SaveConfig()
         {
-            this._data.VERSION = Version.ToString();
-            Config.Clear();
-            Config.WriteObject(this._data, true);
-            Config.Save();
+            if (canSaveConfig)
+            {
+                config.VERSION = Version.ToString();
+                Config.WriteObject(config, true);
+            }
         }
 
         #endregion
 
         #region Helpers
 
-        private void CreateRecycler(BasePlayer p)
+        private Recycler CreateRecycler(BasePlayer player)
         {
-            Recycler r =
-                GameManager.server.CreateEntity(Recycle.RecyclePrefab, p.transform.position + Vector3.down * 500) as
-                    Recycler;
+            var recycler = GameManager.server.CreateEntity(RecyclePrefab, player.transform.position.WithY(-5f)) as Recycler;
 
-            if (r == null) return;
+            if (!recycler) return null;
 
-            r.Spawn();
+            recycler.enableSaving = false;
+            recycler.Spawn();
 
-            r.recycleEfficiency = this._data.Settings.RefundRatio;
-            r.enableSaving = false;
-            r.SetFlag(BaseEntity.Flags.Locked, true);
-            r.UpdateNetworkGroup();
+            if (!IsValid(recycler)) return null;
 
-            if (!r.isSpawned) return;
-            r.gameObject.layer = 0;
-            r.SendNetworkUpdateImmediate(true);
-            this.Subscribe(nameof(CanNetworkTo));
-            this.OpenContainer(p, r);
-            this._recyclers.Add(r.net.ID, new EntityAndPlayer { Entity = r, Player = p });
+            recycler.recycleEfficiency = config.Settings.RefundRatio;
+            recycler.SetFlag(BaseEntity.Flags.Locked, true);
+            recycler.UpdateNetworkGroup();
+            recycler.gameObject.layer = 0;
+            recycler.SendNetworkUpdateImmediate(true);
+
+            OpenContainer(player, recycler);
+
+            _recyclers.Add(recycler.net.ID.Value, (recycler, player));
+
+            return recycler;
         }
 
-        private void OpenContainer(BasePlayer p, StorageContainer con)
+        private void OpenContainer(BasePlayer player, StorageContainer container)
         {
-            timer.In(.1f, () =>
+            player.Invoke(() =>
             {
-                p.EndLooting();
-                if (!p.inventory.loot.StartLootingEntity(con, false)) return;
-                p.inventory.loot.AddContainer(con.inventory);
-                p.inventory.loot.SendImmediate();
-                p.ClientRPCPlayer(null, p, "RPC_OpenLootPanel", con.panelName);
-                p.SendNetworkUpdate();
-            });
+                if (!container || container.IsDestroyed) return;
+                player.EndLooting();
+                if (!player.inventory.loot.StartLootingEntity(container, false)) return;
+                player.inventory.loot.AddContainer(container.inventory);
+                player.inventory.loot.SendImmediate();
+                player.ClientRPC(RpcTarget.Player("RPC_OpenLootPanel", player), container.panelName);
+                player.SendNetworkUpdate();
+            }, 0.2f);
         }
 
-        private void DropRecyclerContents(BaseEntity e)
+        private void DropRecyclerContents(Recycler recycler, BasePlayer player)
         {
-            if (!(e is Recycler) || !this.IsRecycleBox(e)) return;
+            if (!player || player.inventory == null || player.inventory.containerMain == null || player.inventory.containerBelt == null) return;
+            if (!recycler || recycler.inventory == null || recycler.inventory.itemList.IsNullOrEmpty()) return;
 
-            Recycler recycler = (Recycler)e;
+            List<Item> items = Pool.Get<List<Item>>();
 
-            if ((recycler.inventory?.itemList?.Count ?? 0) == 0) return;
+            items.AddRange(recycler.inventory.itemList);
 
-            BasePlayer p = this.PlayerFromRecycler(recycler.net.ID);
-            if (p == null) return;
-            this.PrintToChat(p, this.GetMessage("Recycle", "Dropped", p));
-
-            List<Item> items = recycler.inventory.itemList.ToList();
-
-            if (this._data.Settings.InventoryBeforeBag)
+            if (config.Settings.InventoryBeforeBag)
             {
                 for (int i = 0; i < items.Count; i++)
                 {
                     Item item = items[i];
 
-                    bool flag = false;
-
-                    if (!p.inventory.containerMain.IsFull())
-                        flag = item.MoveToContainer(p.inventory.containerMain);
-
-                    if (!flag && !p.inventory.containerBelt.IsFull())
+                    if (player.inventory.GiveItem(item))
                     {
-                        item.MoveToContainer(p.inventory.containerBelt);
+                        items.RemoveAt(i);
+                        i--;
                     }
-
-                    if (!flag) continue;
-
-                    items.RemoveAt(i);
-                    i--;
                 }
             }
 
-            if (items.Count == 0) return;
-
-            DroppedItemContainer bag =
-                GameManager.server.CreateEntity(Recycle.BackpackPrefab, p.transform.position + Vector3.up,
-                    Quaternion.identity) as DroppedItemContainer;
-
-            if (bag == null) return;
-
-            bag.enableSaving = false;
-            bag.TakeFrom(new[] { recycler.inventory });
-            bag.Spawn();
-            bag.lootPanelName = "generic_resizable";
-            bag.playerSteamID = p.userID;
-            this._droppedBags.Add(bag.net.ID, new EntityAndPlayer { Entity = bag, Player = p });
-        }
-
-        private void DestroyRecycler(BaseEntity e)
-        {
-            if (this.IsRecycleBox(e))
+            if (items.Count == 0)
             {
-                this.DropRecyclerContents(e);
-                this._recyclers.Remove(e.net.ID);
-                e.Kill();
+                Pool.FreeUnmanaged(ref items);
+                return;
             }
 
-            if (this._recyclers.Count == 0)
-                this.Unsubscribe(nameof(CanNetworkTo));
+            Message(player, "Recycle", "Dropped");
+
+            Pool.FreeUnmanaged(ref items);
+
+            var container = GameManager.server.CreateEntity(BackpackPrefab, player.transform.position + Vector3.up) as DroppedItemContainer;
+
+            if (!container) return;
+
+            container.enableSaving = false;
+            container.lootPanelName = "generic_resizable";
+            container.playerSteamID = player.userID;
+            container.TakeFrom(new[] { recycler.inventory });
+            container.Spawn();
+
+            if (IsValid(container))
+            {
+                _droppedContainers[container.net.ID.Value] = (container, player);
+            }
+        }
+
+        private void DestroyRecycler(BasePlayer player)
+        {
+            Recycler recycler = RecyclerFromPlayer(player.userID);
+
+            if (IsValid(recycler) && _recyclers.TryGetValue(recycler.net.ID.Value, out var t))
+            {
+                DropRecyclerContents(recycler, t.player);
+                _recyclers.Remove(recycler.net.ID.Value);
+                recycler.Kill();
+            }
         }
 
         private void DestroyRecyclers()
         {
-            while (this._recyclers.Count > 0)
-                this.DestroyRecycler(this._recyclers.FirstOrDefault().Value.Entity);
-
-            this.Unsubscribe(nameof(CanNetworkTo));
-            this._recyclers.Clear();
+            if (_recyclers.Count == 0) return;
+            var tmp = Pool.Get<List<KeyValuePair<ulong, (Recycler, BasePlayer)>>>();
+            tmp.AddRange(_recyclers);
+            foreach (var (uid, (recycler, player)) in tmp)
+            {
+                if (IsValid(recycler))
+                {
+                    DropRecyclerContents(recycler, player);
+                    recycler.Kill();
+                }
+                _recyclers.Remove(uid);
+            }
+            Pool.FreeUnmanaged(ref tmp);
         }
 
         private void DestroyBags()
         {
-            while (this._droppedBags.Count > 0)
+            if (_droppedContainers.Count == 0) return;
+            var tmp = Pool.Get<List<KeyValuePair<ulong, (DroppedItemContainer, BasePlayer)>>>();
+            tmp.AddRange(_droppedContainers);
+            foreach (var (uid, (container, _)) in tmp)
             {
-                KeyValuePair<uint, EntityAndPlayer> ueap = this._droppedBags.FirstOrDefault();
-                this._droppedBags.Remove(ueap.Value.Entity.net.ID);
-                ueap.Value.Entity.Kill();
+                if (IsValid(container))
+                {
+                    container.Kill();
+                }
+                _droppedContainers.Remove(uid);
             }
-
-            this._droppedBags.Clear();
+            Pool.FreeUnmanaged(ref tmp);
         }
 
-        private string GetMessage(string top, string bottom, BasePlayer p)
+        private string GetMessage(string top, string bottom, string userid)
         {
-            string id = null;
-            if (p != null)
-                id = p.UserIDString;
-
-            return lang.GetMessage(top + " -> " + bottom, this, id);
+            return lang.GetMessage(top + " -> " + bottom, this, userid);
         }
 
-        private int[] GetCooldown(ulong uid)
+        private int[] GetCooldown(string userid)
         {
-            long time;
-            if (!this._cooldowns.TryGetValue(uid, out time)) return new int[] { 0, 0 };
+            if (!_cooldowns.TryGetValue(userid, out var time)) return Array.Empty<int>();
 
-            time += (long)this._data.Settings.Cooldown * 60;
+            time += (long)config.Settings.Cooldown * 60;
+
             long now = DateTimeOffset.Now.ToUnixTimeSeconds();
 
-            if (now > time) return new int[] { 0, 0 };
+            if (now > time) return Array.Empty<int>();
 
             TimeSpan diff = TimeSpan.FromSeconds(time - DateTimeOffset.Now.ToUnixTimeSeconds());
+
             return new int[] { diff.Minutes, diff.Seconds };
         }
 
-        private string CooldownTimesToString(int[] times, BasePlayer p)
+        private string CooldownTimesToString(int[] times, BasePlayer player)
         {
-            if (times == null || times.Length != 2) return "";
+            if (times == null || times.Length != 2) return string.Empty;
+
             int mins = times[0], secs = times[1];
-            return (
-                string.Format(
-                    mins == 0 ? "" : ("{0} " + this.GetMessage("Timings", mins == 1 ? "minute" : "minutes", p)), mins) +
-                string.Format(" {0} " + this.GetMessage("Timings", secs == 1 ? "second" : "seconds", p), secs)
+
+            return (string.Format(
+                mins == 0 ? string.Empty : ("{0} " + GetMessage("Timings", mins == 1 ? "minute" : "minutes", player.UserIDString)), mins) +
+                string.Format(" {0} " + GetMessage("Timings", secs == 1 ? "second" : "seconds", player.UserIDString), secs)
             ).Trim();
         }
 
@@ -557,104 +539,85 @@ namespace Oxide.Plugins
 
         #region API
 
-        public bool IsRecycler(uint netID) => this._recyclers.ContainsKey(netID);
+        private BasePlayer PlayerFromRecycler(ulong netID) => _recyclers.TryGetValue(netID, out var t) ? t.player : null;
 
-        public BasePlayer PlayerFromRecycler(uint netID) =>
-            !this.IsRecycler(netID) ? null : this._recyclers[netID].Player;
-
-        public BaseEntity RecyclerFromPlayer(ulong uid)
+        private Recycler RecyclerFromPlayer(ulong userid)
         {
-            foreach (EntityAndPlayer eap in this._recyclers.Values)
-                if (eap.Player.userID == uid)
-                    return eap.Entity;
+            foreach (var (recycler, player) in _recyclers.Values)
+                if (player?.userID == userid)
+                    return recycler;
             return null;
         }
 
-        public bool IsOnCooldown(ulong uid) => !this.CanBypassCooldown(uid) && this._cooldowns.ContainsKey(uid) &&
-                                               this._cooldowns[uid] + (int)(this._data?.Settings?.Cooldown ?? 5) * 60 >
-                                               DateTimeOffset.Now.ToUnixTimeSeconds();
+        private bool IsOnCooldown(IPlayer user) => config.Settings.Cooldown > 0 && !CanBypassCooldown(user) && _cooldowns.ContainsKey(user.Id) && DateTimeOffset.Now.ToUnixTimeSeconds() < _cooldowns[user.Id];
 
-        public bool CanUseRecycler(ulong uid) =>
-            this.permission.UserHasPermission(uid + "", Recycle.RecyclerPermission);
+        private bool CanUseRecycler(IPlayer user) => user.HasPermission(RecyclerPermission);
 
-        public bool CanManageRecyclers(ulong uid) =>
-            this.permission.UserHasPermission(uid + "", Recycle.AdminPermission);
+        private bool CanManageRecyclers(IPlayer user) => user.HasPermission(AdminPermission);
 
-        public bool CanBypassCooldown(ulong uid) =>
-            this.permission.UserHasPermission(uid + "", Recycle.CooldownBypassPermission);
+        private bool CanBypassCooldown(IPlayer user) => user.HasPermission(CooldownBypassPermission);
 
-        #region Friendly API
+        private bool IsRecycleBox(BaseNetworkable e) => IsValid(e) && _recyclers.ContainsKey(e.net.ID.Value);
 
-        // Backwards compatability support
-        public bool IsRecycleBox(BaseNetworkable e)
+        private bool CanPlayerOpenRecycler(BasePlayer player)
         {
-            if (e == null || e.net == null) return false;
-            return this.IsRecycler(e.net.ID);
-        }
-
-        public bool CanPlayerOpenRecycler(BasePlayer p)
-        {
-            if (p == null || p.IsDead()) this.PrintToChat(p, this.GetMessage("Denied", "Hook Denied", p));
-            else if (!this.CanUseRecycler(p.userID) && !this.CanManageRecyclers(p.userID))
-                this.PrintToChat(p, this.GetMessage("Denied", "Permission", p));
-            else if (this._data.Settings.Cooldown > 0 && this.IsOnCooldown(p.userID))
-                this.PrintToChat(p, this.GetMessage("Cooldown", "In", p),
-                    this.CooldownTimesToString(this.GetCooldown(p.userID), p));
-            else if (p.IsWounded()) this.PrintToChat(p, this.GetMessage("Denied", "Wounded", p));
-            else if (!p.CanBuild()) this.PrintToChat(p, this.GetMessage("Denied", "Privilege", p));
-            else if (this._data.Settings.RadiationMax > 0 && p.radiationLevel > this._data.Settings.RadiationMax)
-                this.PrintToChat(p, this.GetMessage("Denied", "Irradiation", p));
-            else if (p.IsSwimming()) this.PrintToChat(p, this.GetMessage("Denied", "Swimming", p));
-            else if (!p.IsOnGround() || p.IsFlying || p.isInAir)
-                this.PrintToChat(p, this.GetMessage("Denied", "Falling", p));
-            else if (p.isMounted) this.PrintToChat(p, this.GetMessage("Denied", "Mounted", p));
-            else if (p.GetComponentInParent<CargoShip>()) this.PrintToChat(p, this.GetMessage("Denied", "Ship", p));
-            else if (p.GetComponentInParent<HotAirBalloon>())
-                this.PrintToChat(p, this.GetMessage("Denied", "Balloon", p));
-            else if (p.GetComponentInParent<Lift>()) this.PrintToChat(p, this.GetMessage("Denied", "Elevator", p));
-            else if (!this._data.Settings.AllowedInSafeZones && p.InSafeZone())
-                this.PrintToChat(p, this.GetMessage("Denied", "Safe Zone", p));
+            if (!player || !(player.IPlayer is IPlayer user) || !player.IsAlive())
+                Message(player, "Denied", "Hook Denied");
+            else if (!CanUseRecycler(user) && !CanManageRecyclers(user))
+                Message(player, "Denied", "Permission");
+            else if (IsOnCooldown(user))
+                Message(player, "Cooldown", "In", CooldownTimesToString(GetCooldown(player.UserIDString), player));
+            else if (player.IsWounded())
+                Message(player, "Denied", "Wounded");
+            else if (!player.CanBuild())
+                Message(player, "Denied", "Privilege");
+            else if (config.Settings.RadiationMax > 0 && player.radiationLevel > config.Settings.RadiationMax)
+                Message(player, "Denied", "Irradiation");
+            else if (player.IsSwimming())
+                Message(player, "Denied", "Swimming");
+            else if (!player.IsOnGround() || player.IsFlying || player.isInAir)
+                Message(player, "Denied", "Falling");
+            else if (player.isMounted || player.GetParentEntity() is BaseMountable)
+                Message(player, "Denied", "Mounted");
+            else if (player.GetComponentInParent<CargoShip>())
+                Message(player, "Denied", "Ship");
+            else if (player.GetComponentInParent<HotAirBalloon>())
+                Message(player, "Denied", "Balloon");
+            else if (player.GetComponentInParent<Lift>())
+                Message(player, "Denied", "Elevator");
+            else if (!config.Settings.AllowedInSafeZones && player.InSafeZone())
+                Message(player, "Denied", "Safe Zone");
+            else if (Interface.Call("CanOpenRecycler", player) is object obj && obj != null && (obj is not bool val || !val))
+                Message(player, "Denied", obj is string str && str.Length > 0 ? str : "Hook Denied");
             else
-            {
-                object ret = Interface.Call("CanOpenRecycler", p);
-                if (ret is bool && !(bool)ret)
-                    this.PrintToChat(p, this.GetMessage("Denied", "Hook Denied", p));
-                else return true;
-            }
+                return true;
 
             return false;
         }
 
-        public bool IsOnCooldown(BasePlayer p) => this.IsOnCooldown(p.userID);
-
-        public void OpenRecycler(BasePlayer p)
+        private void OpenRecycler(BasePlayer player)
         {
-            if (p == null) return;
-            BaseEntity result = this.RecyclerFromPlayer(p.userID);
-            if (result == null) this.CreateRecycler(p);
-            else
-            {
-                this.DestroyRecycler(result);
-                this.CreateRecycler(p);
-            }
+            if (!player) 
+                return;
+
+            DestroyRecycler(player);
+            CreateRecycler(player);
         }
 
-        public void AddNpc(string id)
+        private void AddNpc(string id)
         {
-            if (this._data?.Settings?.NPCIds == null) return;
+            if (config.Settings.NPCIds.Contains(id)) 
+                return;
 
-            this._data.Settings.NPCIds.Add(id);
-            Config.WriteObject(this._data, true);
+            config.Settings.NPCIds.Add(id);
+            SaveConfig();
         }
 
-        public void RemoveNpc(string id)
+        private void RemoveNpc(string id)
         {
-            if (this._data?.Settings?.NPCIds == null) return;
-            if (this._data.Settings.NPCIds.Remove(id))
-                Config.WriteObject(this._data, true);
+            if (config.Settings.NPCIds.Remove(id)) 
+                SaveConfig();
         }
-
-        #endregion
 
         #endregion
     }
