@@ -96,3 +96,5 @@ public void OpenRecycler(BasePlayer player)
 ## Credits
 
 - **Calytic**, the original author of this plugin
+- **5Dev24**, for maintaining this plugin
+- **nivex**, for maintaining this plugin
