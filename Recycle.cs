@@ -10,7 +10,7 @@ using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "5Dev24", "3.1.3")]
+    [Info("Recycle", "nivex", "3.1.4")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -81,13 +81,17 @@ namespace Oxide.Plugins
 
         private object CanMoveItem(Item item, PlayerInventory inv, ItemContainerId targetContainerId, int targetSlot, int amount)
         {
-            if (targetSlot < 6) return null;
-
             foreach (ItemContainer container in inv.loot.containers)
             {
                 if (container.uid != targetContainerId || container.entityOwner == null) continue;
 
-                if (container.entityOwner is Recycler recycler && IsRecycleBox(recycler)) return false;
+                if (container.entityOwner is Recycler recycler && IsRecycleBox(recycler))
+                {
+                    if (item.parent == container && item.position >= 6 && targetSlot < 6)
+                    {
+                        return false;
+                    }
+                }
             }
 
             return null;
@@ -102,6 +106,11 @@ namespace Oxide.Plugins
             BasePlayer player = PlayerFromRecycler(recycler.net.ID.Value);
 
             if (!player) return null;
+
+            if (item.parent == container && targetPos < 6 && item.position >= 6)
+            {
+                return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
+            }
 
             if (targetPos < 6)
             {
@@ -130,11 +139,15 @@ namespace Oxide.Plugins
             }
             else if (config.Settings.ToInventory)
             {
+                item.RemoveFromContainer();
+
                 player.Invoke(() =>
                 {
                     if (item == null) return;
                     player?.inventory?.GiveItem(item);
                 }, 0.0625f);
+
+                return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
             }
 
             return null;
@@ -315,7 +328,7 @@ namespace Oxide.Plugins
             }
 
             public SettingsWrapper Settings = new();
-            public string VERSION = "3.1.1";
+            public string VERSION = "3.1.4";
         }
 
         #endregion
