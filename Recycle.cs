@@ -2,15 +2,13 @@
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using UnityEngine;
-using System.Linq;
 using Oxide.Core;
 using System;
 using Facepunch;
-using Oxide.Core.Plugins;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "nivex", "3.1.4")]
+    [Info("Recycle", "nivex", "3.1.5")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -81,17 +79,13 @@ namespace Oxide.Plugins
 
         private object CanMoveItem(Item item, PlayerInventory inv, ItemContainerId targetContainerId, int targetSlot, int amount)
         {
+            if (targetSlot < 6) return null;
+
             foreach (ItemContainer container in inv.loot.containers)
             {
                 if (container.uid != targetContainerId || container.entityOwner == null) continue;
 
-                if (container.entityOwner is Recycler recycler && IsRecycleBox(recycler))
-                {
-                    if (item.parent == container && item.position >= 6 && targetSlot < 6)
-                    {
-                        return false;
-                    }
-                }
+                if (container.entityOwner is Recycler recycler && IsRecycleBox(recycler)) return false;
             }
 
             return null;
@@ -107,11 +101,6 @@ namespace Oxide.Plugins
 
             if (!player) return null;
 
-            if (item.parent == container && targetPos < 6 && item.position >= 6)
-            {
-                return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
-            }
-
             if (targetPos < 6)
             {
                 string type = Enum.GetName(typeof(ItemCategory), item.info.category);
@@ -125,15 +114,15 @@ namespace Oxide.Plugins
                 {
                     recycler.Invoke(() =>
                     {
-                        if (recycler.IsOn() || !recycler.HasRecyclable()) return;
+                        if (recycler.IsOn()) return;
 
-                        if (config.Settings.InstantRecycling)
-                        {
-                            recycler.InvokeRepeating(recycler.RecycleThink, 0.0625f, 0.0625f);
-                            recycler.SetFlag(BaseEntity.Flags.On, true);
-                            recycler.SendNetworkUpdateImmediate();
-                        }
-                        else recycler.StartRecycling();
+                        if (!recycler.HasRecyclable()) return;
+
+                        float time = config.Settings.InstantRecycling ? 0.0625f : recycler.GetRecycleThinkDuration();
+
+                        recycler.InvokeRepeating(recycler.RecycleThink, time, time);
+                        recycler.SetFlag(BaseEntity.Flags.On, b: true);
+                        recycler.SendNetworkUpdateImmediate();
                     }, 0.0625f);
                 }
             }
@@ -144,10 +133,10 @@ namespace Oxide.Plugins
                 player.Invoke(() =>
                 {
                     if (item == null) return;
-                    player?.inventory?.GiveItem(item);
+                    player.inventory.GiveItem(item);
                 }, 0.0625f);
 
-                return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
+                //return ItemContainer.CanAcceptResult.CanAccept;
             }
 
             return null;
