@@ -8,7 +8,7 @@ using Facepunch;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "nivex", "3.1.5")]
+    [Info("Recycle", "nivex", "3.1.6")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -46,14 +46,12 @@ namespace Oxide.Plugins
 
         private void OnLootEntityEnd(BasePlayer player, Recycler recycler)
         {
-            if (!player) return;
-
-            DestroyRecycler(player);
+            if (player != null) DestroyRecycler(player);
         }
 
         private void OnPlayerDisconnected(BasePlayer player, string reason)
         {
-            if (!player) return;
+            if (player == null) return;
 
             DestroyRecycler(player);
 
@@ -99,7 +97,7 @@ namespace Oxide.Plugins
 
             BasePlayer player = PlayerFromRecycler(recycler.net.ID.Value);
 
-            if (!player) return null;
+            if (player == null) return null;
 
             if (targetPos < 6)
             {
@@ -128,15 +126,7 @@ namespace Oxide.Plugins
             }
             else if (config.Settings.ToInventory)
             {
-                item.RemoveFromContainer();
-
-                player.Invoke(() =>
-                {
-                    if (item == null) return;
-                    player.inventory.GiveItem(item);
-                }, 0.0625f);
-
-                //return ItemContainer.CanAcceptResult.CanAccept;
+                player.Invoke(() => player.inventory.GiveItem(item), 0f);
             }
 
             return null;
@@ -187,7 +177,7 @@ namespace Oxide.Plugins
 
         private void OnUseNPC(BasePlayer npc, BasePlayer player) // HumanNPC plugin support
         {
-            if (!npc || !config.Settings.NPCIds.Contains(npc.UserIDString)) return;
+            if (npc == null || !config.Settings.NPCIds.Contains(npc.UserIDString)) return;
             OpenRecycler(player);
         }
 
@@ -208,7 +198,7 @@ namespace Oxide.Plugins
 
             BasePlayer player = user.Object as BasePlayer;
             
-            if (!player || !CanPlayerOpenRecycler(player)) 
+            if (player == null || !CanPlayerOpenRecycler(player)) 
                 return;
 
             OpenRecycler(player);
@@ -377,7 +367,7 @@ namespace Oxide.Plugins
         {
             var recycler = GameManager.server.CreateEntity(RecyclePrefab, player.transform.position.WithY(-5f)) as Recycler;
 
-            if (!recycler) return null;
+            if (recycler == null) return null;
 
             recycler.enableSaving = false;
             recycler.Spawn();
@@ -401,7 +391,7 @@ namespace Oxide.Plugins
         {
             player.Invoke(() =>
             {
-                if (!container || container.IsDestroyed) return;
+                if (container == null || container.IsDestroyed) return;
                 player.EndLooting();
                 if (!player.inventory.loot.StartLootingEntity(container, false)) return;
                 player.inventory.loot.AddContainer(container.inventory);
@@ -413,8 +403,8 @@ namespace Oxide.Plugins
 
         private void DropRecyclerContents(Recycler recycler, BasePlayer player)
         {
-            if (!player || player.inventory == null || player.inventory.containerMain == null || player.inventory.containerBelt == null) return;
-            if (!recycler || recycler.inventory == null || recycler.inventory.itemList.IsNullOrEmpty()) return;
+            if (player == null || player.inventory == null || player.inventory.containerMain == null || player.inventory.containerBelt == null) return;
+            if (recycler == null || recycler.inventory == null || recycler.inventory.itemList.IsNullOrEmpty()) return;
 
             List<Item> items = Pool.Get<List<Item>>();
 
@@ -446,7 +436,7 @@ namespace Oxide.Plugins
 
             var container = GameManager.server.CreateEntity(BackpackPrefab, player.transform.position + Vector3.up) as DroppedItemContainer;
 
-            if (!container) return;
+            if (container == null) return;
 
             container.enableSaving = false;
             container.lootPanelName = "generic_resizable";
@@ -563,7 +553,7 @@ namespace Oxide.Plugins
 
         private bool CanPlayerOpenRecycler(BasePlayer player)
         {
-            if (!player || !(player.IPlayer is IPlayer user) || !player.IsAlive())
+            if (player == null || !(player.IPlayer is IPlayer user) || !player.IsAlive())
                 Message(player, "Denied", "Hook Denied");
             else if (!CanUseRecycler(user) && !CanManageRecyclers(user))
                 Message(player, "Denied", "Permission");
@@ -599,7 +589,7 @@ namespace Oxide.Plugins
 
         private void OpenRecycler(BasePlayer player)
         {
-            if (!player) 
+            if (player == null) 
                 return;
 
             DestroyRecycler(player);
