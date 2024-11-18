@@ -8,7 +8,7 @@ using Facepunch;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "nivex", "3.1.6")]
+    [Info("Recycle", "nivex", "3.1.7")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -332,17 +332,18 @@ namespace Oxide.Plugins
         protected override void LoadConfig()
         {
             base.LoadConfig();
+            canSaveConfig = false;
             try
             {
                 config = Config.ReadObject<ConfigData>();
                 config ??= new();
                 config.Settings ??= new();
                 config.Settings.NPCIds ??= new();
+                canSaveConfig = true;
                 SaveConfig();
             }
             catch (Exception ex)
             {
-                canSaveConfig = false;
                 Puts(ex.ToString());
                 LoadDefaultConfig();
             }
@@ -374,7 +375,8 @@ namespace Oxide.Plugins
 
             if (!IsValid(recycler)) return null;
 
-            recycler.recycleEfficiency = config.Settings.RefundRatio;
+            recycler.radtownRecycleEfficiency = config.Settings.RefundRatio;
+            recycler.safezoneRecycleEfficiency = config.Settings.RefundRatio;
             recycler.SetFlag(BaseEntity.Flags.Locked, true);
             recycler.UpdateNetworkGroup();
             recycler.gameObject.layer = 0;
