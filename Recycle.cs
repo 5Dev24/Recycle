@@ -8,7 +8,7 @@ using Facepunch;
 
 namespace Oxide.Plugins
 {
-    [Info("Recycle", "nivex", "3.1.7")]
+    [Info("Recycle", "nivex", "3.2.0")]
     [Description("Recycle items into their resources")]
     public class Recycle : RustPlugin
     {
@@ -19,10 +19,34 @@ namespace Oxide.Plugins
             RecyclerPermission = "recycle.use",
             CooldownBypassPermission = "recycle.bypass";
 
-        private readonly Dictionary<ulong, (DroppedItemContainer container, BasePlayer player)> _droppedContainers = new();
-        private readonly Dictionary<ulong, (Recycler recycler, BasePlayer player)> _recyclers = new();
+        private readonly Dictionary<ulong, DroppedInfo> _droppedContainers = new();
+        private readonly Dictionary<ulong, RecyclerInfo> _recyclers = new();
         private readonly Dictionary<string, long> _cooldowns = new();
         private ConfigData config;
+
+        public class DroppedInfo
+        {
+            public DroppedItemContainer container;
+            public BasePlayer target;
+            public DroppedInfo(DroppedItemContainer container, BasePlayer target)
+            {
+                this.container = container;
+                this.target = target;
+            }
+        }
+
+        public class RecyclerInfo
+        {
+            public Recycler recycler;
+            public BasePlayer player;
+            public ItemContainerId id;
+            public RecyclerInfo(Recycler recycler, BasePlayer player)
+            {
+                this.recycler = recycler;
+                this.player = player;
+                id = recycler.inventory.uid;
+            }
+        }
 
         #region Hooks
 
@@ -57,22 +81,19 @@ namespace Oxide.Plugins
 
             if (_droppedContainers.Count == 0) return;
 
-            var tmp = Pool.Get<List<KeyValuePair<ulong, (DroppedItemContainer, BasePlayer)>>>();
-
+            using var tmp = Pool.Get<PooledList<KeyValuePair<ulong, DroppedInfo>>>();
             tmp.AddRange(_droppedContainers);
 
-            foreach (var (uid, (container, target)) in tmp)
+            foreach (var (uid, val) in tmp)
             {
-                if (!IsValid(container) || !IsValid(target) || target.userID == player.userID)
+                if (!IsValid(val.container) || !IsValid(val.target) || val.target.userID == player.userID)
                 {
-                    if (IsValid(container))
-                        container.Kill();
+                    if (IsValid(val.container))
+                        val.container.Kill();
 
                     _droppedContainers.Remove(uid);
                 }
             }
-
-            Pool.FreeUnmanaged(ref tmp);
         }
 
         private object CanMoveItem(Item item, PlayerInventory inv, ItemContainerId targetContainerId, int targetSlot, int amount)
@@ -89,6 +110,7 @@ namespace Oxide.Plugins
             return null;
         }
 
+        private float lastMessageTime;
         private object CanAcceptItem(ItemContainer container, Item item, int targetPos)
         {
             if (container == null || !(container.entityOwner is Recycler recycler)) return null;
@@ -98,35 +120,38 @@ namespace Oxide.Plugins
             BasePlayer player = PlayerFromRecycler(recycler.net.ID.Value);
 
             if (player == null) return null;
+            
+            string type = Enum.GetName(typeof(ItemCategory), item.info.category);
 
             if (targetPos < 6)
             {
-                string type = Enum.GetName(typeof(ItemCategory), item.info.category);
-
                 if (!config.Settings.RecyclableTypes.Contains(type) || config.Settings.Blacklist.Contains(item.info.shortname))
                 {
-                    Message(player, "Recycle", "Invalid");
+                    if (lastMessageTime < Time.time)
+                    {
+                        lastMessageTime = Time.time + 0.1f;
+                        Message(player, "Recycle", "Invalid");
+                    }
                     return ItemContainer.CanAcceptResult.CannotAcceptRightNow;
                 }
-                else
+
+                recycler.Invoke(() =>
                 {
-                    recycler.Invoke(() =>
-                    {
-                        if (recycler.IsOn()) return;
+                    if (recycler.IsOn()) return;
 
-                        if (!recycler.HasRecyclable()) return;
+                    if (!recycler.HasRecyclable()) return;
 
-                        float time = config.Settings.InstantRecycling ? 0.0625f : recycler.GetRecycleThinkDuration();
+                    float time = config.Settings.InstantRecycling ? 0.0625f : recycler.GetRecycleThinkDuration();
 
-                        recycler.InvokeRepeating(recycler.RecycleThink, time, time);
-                        recycler.SetFlag(BaseEntity.Flags.On, b: true);
-                        recycler.SendNetworkUpdateImmediate();
-                    }, 0.0625f);
-                }
+                    recycler.InvokeRepeating(recycler.RecycleThink, time, time);
+                    recycler.SetFlag(BaseEntity.Flags.On, b: true);
+                    recycler.SendNetworkUpdateImmediate();
+                }, 0.0625f);
             }
-            else if (config.Settings.ToInventory)
+            else if (config.Settings.ToInventory && item.GetOwnerPlayer() == null)
             {
-                player.Invoke(() => player.inventory.GiveItem(item), 0f);
+                Item copy = ItemManager.Create(item.info, item.amount, item.skin);
+                if (player.inventory.GiveItem(copy)) item.Remove();
             }
 
             return null;
@@ -134,45 +159,13 @@ namespace Oxide.Plugins
 
         private object CanLootEntity(BasePlayer player, DroppedItemContainer container)
         {
-            if (container.IsValid() && _droppedContainers.TryGetValue(container.net.ID.Value, out var t) && t.player.userID != player.userID) return true;
+            if (container.IsValid() && _droppedContainers.TryGetValue(container.net.ID.Value, out var t) && t.target.userID != player.userID) return true;
             return null;
         }
 
         private void OnEntityKill(DroppedItemContainer container)
         {
             if (container.IsValid()) _droppedContainers.Remove(container.net.ID.Value);
-        }
-
-        protected override void LoadDefaultMessages()
-        {
-            Func<string, string> youCannot = (thing) => "You cannot recycle while " + thing;
-
-            lang.RegisterMessages(new Dictionary<string, string>
-            {
-                { "Recycle -> Reloaded", "Configuration file has been reloaded" },
-                { "Recycle -> DestroyedAllBags", "All bags have been destroyed" },
-                { "Recycle -> DestroyedAll", "All recyclers have been destroyed" },
-                { "Recycle -> Dropped", "You left some items in the recycler!" },
-                { "Recycle -> Invalid", "You cannot recycle that!" },
-                { "Denied -> Npc Only", "You must use the recycler at specific npcs only" },
-                { "Denied -> Permission", "You don't have permission to use that command" },
-                { "Denied -> Privilege", "You cannot recycle within someone's building privilege" },
-                { "Denied -> Swimming", youCannot("swimming") },
-                { "Denied -> Falling", youCannot("falling") },
-                { "Denied -> Mounted", youCannot("mounted") },
-                { "Denied -> Wounded", youCannot("wounded") },
-                { "Denied -> Irradiation", youCannot("irradiated") },
-                { "Denied -> Ship", youCannot("on a ship") },
-                { "Denied -> Elevator", youCannot("on an elevator") },
-                { "Denied -> Balloon", youCannot("on a balloon") },
-                { "Denied -> Safe Zone", youCannot("in a safe zone") },
-                { "Denied -> Hook Denied", "You can't recycle right now" },
-                { "Cooldown -> In", "You need to wait {0} before recycling" },
-                { "Timings -> second", "second" },
-                { "Timings -> seconds", "seconds" },
-                { "Timings -> minute", "minute" },
-                { "Timings -> minutes", "minutes" }
-            }, this);
         }
 
         private void OnUseNPC(BasePlayer npc, BasePlayer player) // HumanNPC plugin support
@@ -254,111 +247,13 @@ namespace Oxide.Plugins
 
         private void Message(BasePlayer player, string top, string bottom, params object[] args)
         {
+            if (player == null) return;
             string message = GetMessage(top, bottom, player.UserIDString);
             if (string.IsNullOrEmpty(message)) return;
             PrintToChat(player, args.Length > 0 ? string.Format(message, args) : message);
         }
 
         public bool IsValid(BaseNetworkable e) => e.IsValid() && !e.IsDestroyed;
-
-        #endregion
-
-        #region Structs
-
-        public class ConfigData
-        {
-            public class SettingsWrapper
-            {
-                [JsonProperty("Command To Open Recycler")]
-                public string RecycleCommand = "recycle";
-
-                [JsonProperty("Cooldown (in minutes)")]
-                public float Cooldown = 5.0f;
-
-                [JsonProperty("Maximum Radiation")] 
-                public float RadiationMax = 1f;
-
-                [JsonProperty("Refund Ratio")] 
-                public float RefundRatio = 0.5f;
-
-                [JsonProperty("NPCs Only")] 
-                public bool NPCOnly;
-
-                [JsonProperty("Allowed In Safe Zones")]
-                public bool AllowedInSafeZones = true;
-
-                [JsonProperty("Instant Recycling")] 
-                public bool InstantRecycling = false;
-
-                [JsonProperty("Send Recycled Items To Inventory")]
-                public bool ToInventory = false;
-
-                [JsonProperty("Send Items To Inventory Before Bag")]
-                public bool InventoryBeforeBag = false;
-
-                [JsonProperty("NPC Ids", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
-                public List<object> NPCIds = new();
-
-                [JsonProperty("Recyclable Types", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
-                public List<object> RecyclableTypes = new();
-
-                [JsonProperty("Blacklisted Items", ObjectCreationHandling = ObjectCreationHandling.Replace)] 
-                public List<object> Blacklist = new();
-            }
-
-            public SettingsWrapper Settings = new();
-            public string VERSION = "3.1.4";
-        }
-
-        #endregion
-
-        #region Configuration
-
-        protected override void LoadDefaultConfig()
-        {
-            config = new()
-            {
-                Settings =
-                {
-                    RecyclableTypes = new()
-                    {
-                        "Ammunition", "Attire", "Common", "Component", "Construction", "Electrical",
-                        "Fun", "Items", "Medical", "Misc", "Tool", "Traps", "Weapon"
-                    }
-                }
-            };
-        }
-
-        protected override void LoadConfig()
-        {
-            base.LoadConfig();
-            canSaveConfig = false;
-            try
-            {
-                config = Config.ReadObject<ConfigData>();
-                config ??= new();
-                config.Settings ??= new();
-                config.Settings.NPCIds ??= new();
-                canSaveConfig = true;
-                SaveConfig();
-            }
-            catch (Exception ex)
-            {
-                Puts(ex.ToString());
-                LoadDefaultConfig();
-            }
-        }
-
-        private bool canSaveConfig = true;
-
-        protected override void SaveConfig()
-        {
-            if (canSaveConfig)
-            {
-                config.VERSION = Version.ToString();
-                Config.WriteObject(config, true);
-            }
-        }
 
         #endregion
 
@@ -384,7 +279,7 @@ namespace Oxide.Plugins
 
             OpenContainer(player, recycler);
 
-            _recyclers.Add(recycler.net.ID.Value, (recycler, player));
+            _recyclers.Add(recycler.net.ID.Value, new(recycler, player));
 
             return recycler;
         }
@@ -393,7 +288,7 @@ namespace Oxide.Plugins
         {
             player.Invoke(() =>
             {
-                if (container == null || container.IsDestroyed) return;
+                if (container == null || container.IsDestroyed || player.IsDestroyed) return;
                 player.EndLooting();
                 if (!player.inventory.loot.StartLootingEntity(container, false)) return;
                 player.inventory.loot.AddContainer(container.inventory);
@@ -408,7 +303,7 @@ namespace Oxide.Plugins
             if (player == null || player.inventory == null || player.inventory.containerMain == null || player.inventory.containerBelt == null) return;
             if (recycler == null || recycler.inventory == null || recycler.inventory.itemList.IsNullOrEmpty()) return;
 
-            List<Item> items = Pool.Get<List<Item>>();
+            using var items = Pool.Get<PooledList<Item>>();
 
             items.AddRange(recycler.inventory.itemList);
 
@@ -428,13 +323,10 @@ namespace Oxide.Plugins
 
             if (items.Count == 0)
             {
-                Pool.FreeUnmanaged(ref items);
                 return;
             }
 
             Message(player, "Recycle", "Dropped");
-
-            Pool.FreeUnmanaged(ref items);
 
             var container = GameManager.server.CreateEntity(BackpackPrefab, player.transform.position + Vector3.up) as DroppedItemContainer;
 
@@ -443,12 +335,12 @@ namespace Oxide.Plugins
             container.enableSaving = false;
             container.lootPanelName = "generic_resizable";
             container.playerSteamID = player.userID;
-            container.TakeFrom(new[] { recycler.inventory });
+            container.TakeFrom(new[] { recycler.inventory }, 0f);
             container.Spawn();
 
             if (IsValid(container))
             {
-                _droppedContainers[container.net.ID.Value] = (container, player);
+                _droppedContainers[container.net.ID.Value] = new(container, player);
             }
         }
 
@@ -467,34 +359,32 @@ namespace Oxide.Plugins
         private void DestroyRecyclers()
         {
             if (_recyclers.Count == 0) return;
-            var tmp = Pool.Get<List<KeyValuePair<ulong, (Recycler, BasePlayer)>>>();
-            tmp.AddRange(_recyclers);
-            foreach (var (uid, (recycler, player)) in tmp)
+            using var tmp = Pool.Get<PooledList<RecyclerInfo>>();
+            tmp.AddRange(_recyclers.Values);
+            foreach (var val in tmp)
             {
-                if (IsValid(recycler))
+                if (IsValid(val.recycler))
                 {
-                    DropRecyclerContents(recycler, player);
-                    recycler.Kill();
+                    DropRecyclerContents(val.recycler, val.player);
+                    val.recycler.Kill();
                 }
-                _recyclers.Remove(uid);
             }
-            Pool.FreeUnmanaged(ref tmp);
+            _recyclers.Clear();
         }
 
         private void DestroyBags()
         {
             if (_droppedContainers.Count == 0) return;
-            var tmp = Pool.Get<List<KeyValuePair<ulong, (DroppedItemContainer, BasePlayer)>>>();
-            tmp.AddRange(_droppedContainers);
-            foreach (var (uid, (container, _)) in tmp)
+            using var tmp = Pool.Get<PooledList<DroppedInfo>>();
+            tmp.AddRange(_droppedContainers.Values);
+            foreach (var val in tmp)
             {
-                if (IsValid(container))
+                if (IsValid(val.container))
                 {
-                    container.Kill();
+                    val.container.Kill();
                 }
-                _droppedContainers.Remove(uid);
             }
-            Pool.FreeUnmanaged(ref tmp);
+            _droppedContainers.Clear();
         }
 
         private string GetMessage(string top, string bottom, string userid)
@@ -505,8 +395,6 @@ namespace Oxide.Plugins
         private int[] GetCooldown(string userid)
         {
             if (!_cooldowns.TryGetValue(userid, out var time)) return Array.Empty<int>();
-
-            time += (long)config.Settings.Cooldown * 60;
 
             long now = DateTimeOffset.Now.ToUnixTimeSeconds();
 
@@ -537,9 +425,9 @@ namespace Oxide.Plugins
 
         private Recycler RecyclerFromPlayer(ulong userid)
         {
-            foreach (var (recycler, player) in _recyclers.Values)
-                if (player?.userID == userid)
-                    return recycler;
+            foreach (var val in _recyclers.Values)
+                if (val.player?.userID == userid)
+                    return val.recycler;
             return null;
         }
 
@@ -611,6 +499,137 @@ namespace Oxide.Plugins
         {
             if (config.Settings.NPCIds.Remove(id)) 
                 SaveConfig();
+        }
+
+        #endregion
+
+
+        #region Structs
+
+        public class ConfigData
+        {
+            public class SettingsWrapper
+            {
+                [JsonProperty("Command To Open Recycler")]
+                public string RecycleCommand = "recycle";
+
+                [JsonProperty("Cooldown (in minutes)")]
+                public float Cooldown = 5.0f;
+
+                [JsonProperty("Maximum Radiation")]
+                public float RadiationMax = 1f;
+
+                [JsonProperty("Refund Ratio")]
+                public float RefundRatio = 0.5f;
+
+                [JsonProperty("NPCs Only")]
+                public bool NPCOnly;
+
+                [JsonProperty("Allowed In Safe Zones")]
+                public bool AllowedInSafeZones = true;
+
+                [JsonProperty("Instant Recycling")]
+                public bool InstantRecycling = false;
+
+                [JsonProperty("Send Recycled Items To Inventory")]
+                public bool ToInventory = true;
+
+                [JsonProperty("Send Items To Inventory Before Bag")]
+                public bool InventoryBeforeBag = true;
+
+                [JsonProperty("NPC Ids", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+                public List<object> NPCIds = new();
+
+                [JsonProperty("Recyclable Types", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+                public List<object> RecyclableTypes = new();
+
+                [JsonProperty("Blacklisted Items", ObjectCreationHandling = ObjectCreationHandling.Replace)]
+                public List<object> Blacklist = new();
+            }
+
+            public SettingsWrapper Settings = new();
+            public string VERSION = "3.2.0";
+        }
+
+        #endregion
+
+        #region Configuration
+
+        protected override void LoadDefaultMessages()
+        {
+            Func<string, string> youCannot = (thing) => "You cannot recycle while " + thing;
+
+            lang.RegisterMessages(new Dictionary<string, string>
+            {
+                { "Recycle -> Reloaded", "Configuration file has been reloaded" },
+                { "Recycle -> DestroyedAllBags", "All bags have been destroyed" },
+                { "Recycle -> DestroyedAll", "All recyclers have been destroyed" },
+                { "Recycle -> Dropped", "You left some items in the recycler!" },
+                { "Recycle -> Invalid", "You cannot recycle that!" },
+                { "Denied -> Npc Only", "You must use the recycler at specific npcs only" },
+                { "Denied -> Permission", "You don't have permission to use that command" },
+                { "Denied -> Privilege", "You cannot recycle within someone's building privilege" },
+                { "Denied -> Swimming", youCannot("swimming") },
+                { "Denied -> Falling", youCannot("falling") },
+                { "Denied -> Mounted", youCannot("mounted") },
+                { "Denied -> Wounded", youCannot("wounded") },
+                { "Denied -> Irradiation", youCannot("irradiated") },
+                { "Denied -> Ship", youCannot("on a ship") },
+                { "Denied -> Elevator", youCannot("on an elevator") },
+                { "Denied -> Balloon", youCannot("on a balloon") },
+                { "Denied -> Safe Zone", youCannot("in a safe zone") },
+                { "Denied -> Hook Denied", "You can't recycle right now" },
+                { "Cooldown -> In", "You need to wait {0} before recycling" },
+                { "Timings -> second", "second" },
+                { "Timings -> seconds", "seconds" },
+                { "Timings -> minute", "minute" },
+                { "Timings -> minutes", "minutes" }
+            }, this);
+        }
+
+        protected override void LoadDefaultConfig()
+        {
+            config = new()
+            {
+                Settings =
+                {
+                    RecyclableTypes = new()
+                    {
+                        "Ammunition", "Attire", "Component", "Construction", "Electrical", "Fun", "Items", "Medical", "Misc", "Resources", "Tool", "Traps", "Weapon"
+                    }
+                }
+            };
+        }
+
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            canSaveConfig = false;
+            try
+            {
+                config = Config.ReadObject<ConfigData>();
+                config ??= new();
+                config.Settings ??= new();
+                config.Settings.NPCIds ??= new();
+                canSaveConfig = true;
+                SaveConfig();
+            }
+            catch (Exception ex)
+            {
+                Puts(ex.ToString());
+                LoadDefaultConfig();
+            }
+        }
+
+        private bool canSaveConfig = true;
+
+        protected override void SaveConfig()
+        {
+            if (canSaveConfig)
+            {
+                config.VERSION = Version.ToString();
+                Config.WriteObject(config, true);
+            }
         }
 
         #endregion
