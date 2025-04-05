@@ -20,20 +20,19 @@
 ```json
 {
   "Settings": {
+    "Command To Open Recycler": "recycle",
     "Cooldown (in minutes)": 5.0,
     "Maximum Radiation": 1.0,
     "Refund Ratio": 0.5,
     "NPCs Only": false,
     "Allowed In Safe Zones": true,
     "Instant Recycling": false,
-    "Send Recycled Items To Inventory": false,
+    "Send Recycled Items To Inventory": true,
     "Send Items To Inventory Before Bag": true,
-    "Command To Open Recycler": "recycle",
     "NPC Ids": [],
     "Recyclable Types": [
       "Ammunition",
       "Attire",
-      "Common",
       "Component",
       "Construction",
       "Electrical",
@@ -41,13 +40,14 @@
       "Items",
       "Medical",
       "Misc",
+      "Resources",
       "Tool",
       "Traps",
       "Weapon"
     ],
     "Blacklisted Items": []
   },
-  "VERSION": "3.1.3"
+  "VERSION": "3.1.9"
 }
 ```
 
